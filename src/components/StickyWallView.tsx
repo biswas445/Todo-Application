@@ -29,6 +29,7 @@ export function StickyWallView({ store }: { store: Store }) {
     setEditColor(selectedNote.color);
     setConfirmDelete(false);
     setIsEditing(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNote?.id]);
 
   useEffect(() => {

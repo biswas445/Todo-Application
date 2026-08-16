@@ -93,6 +93,7 @@ export function TaskModal({ selectedTaskId, lists, tags, store, onClose }: { sel
     setShowDiscard(false);
     setNewSubtask('');
     formKey.current = task.id;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id]);
 
   useEffect(() => {
