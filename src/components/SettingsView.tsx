@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Bell, Globe, Lock, User, X } from 'lucide-react';
+import { Bell, Globe, Lock, User, X, AlertTriangle } from 'lucide-react';
 import type { Store } from '@/store/useAppStore';
 import { LIMITS } from '@/types';
 
@@ -68,9 +68,9 @@ function PasswordModal({ store, onClose }: { store: Store; onClose: () => void }
         <button className="close-modal" type="button" onClick={onClose} aria-label="Close password dialog"><X size={18} /></button>
         <h2 className="event-modal-title">Change Password</h2>
         {success && <p className="auth-success-inline">Password changed successfully.</p>}
-        <label className="settings-field"><span>Current password</span><input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} required /></label>
-        <label className="settings-field"><span>New password</span><input type="password" value={next} onChange={(e) => setNext(e.target.value)} required /></label>
-        <label className="settings-field"><span>Confirm new password</span><input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required /></label>
+        <label className="settings-field"><span>Current password</span><input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} required autoComplete="current-password" /></label>
+        <label className="settings-field"><span>New password</span><input type="password" value={next} onChange={(e) => setNext(e.target.value)} required autoComplete="new-password" /></label>
+        <label className="settings-field"><span>Confirm new password</span><input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" /></label>
         {error && <p className="auth-error">{error}</p>}
         <div className="modal-actions">
           <div className="modal-actions-right"><button className="outline-button small-btn" type="button" onClick={onClose}>Cancel</button><button className="primary-button small-btn edit-btn" type="submit">Change Password</button></div>
@@ -80,10 +80,52 @@ function PasswordModal({ store, onClose }: { store: Store; onClose: () => void }
   );
 }
 
-export function SettingsView({ store }: { store: Store }) {
+function DeleteAccountModal({ store, onNavigateToSignup, onClose }: { store: Store; onNavigateToSignup: () => void; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    const result = store.deleteAccount(password);
+    setLoading(false);
+    if (!result.ok) {
+      setError(result.error || 'Failed to delete account.');
+      return;
+    }
+    // Account deleted successfully
+    onNavigateToSignup();
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="note-modal delete-account-modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <button className="close-modal" type="button" onClick={onClose} aria-label="Close delete account dialog"><X size={18} /></button>
+        <div className="delete-account-header">
+          <AlertTriangle size={32} className="delete-account-icon" />
+          <h2 className="delete-account-title">Delete your account?</h2>
+        </div>
+        <p className="delete-account-warning">This permanently deletes your account and all associated data. This action cannot be undone.</p>
+        <label className="settings-field"><span>Current password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" placeholder="Enter your password to confirm" /></label>
+        {error && <p className="auth-error">{error}</p>}
+        <div className="modal-actions">
+          <div className="modal-actions-right">
+            <button className="outline-button small-btn" type="button" onClick={onClose} disabled={loading}>Cancel</button>
+            <button className="danger-button small-btn delete-btn" type="submit" disabled={loading}>{loading ? 'Deleting...' : 'Delete Account'}</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+export function SettingsView({ store, onNavigateToSignup }: { store: Store; onNavigateToSignup?: () => void }) {
   const { data, updateSettings, updateUser } = store;
   const s = data.settings;
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const initials = s.displayName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const bioWords = useMemo(() => countWords(s.bio), [s.bio]);
 
@@ -105,6 +147,12 @@ export function SettingsView({ store }: { store: Store }) {
     if (data.user) updateUser({ timezone: v });
   };
 
+  const handleDeleteAccountSuccess = () => {
+    if (onNavigateToSignup) {
+      onNavigateToSignup();
+    }
+  };
+
   return (
     <div className="view-content settings-view">
       <div className="view-heading"><div><h1>Settings</h1></div></div>
@@ -114,6 +162,7 @@ export function SettingsView({ store }: { store: Store }) {
             <div className="avatar-circle">{initials}</div>
             <div><p className="avatar-name">{s.displayName}</p><p className="avatar-email">{s.email}</p></div>
           </div>
+          <Field label="Username" value={data.user?.name ?? ''} readOnly hint="Username is permanent and cannot be changed." />
           <Field label="Display name" value={s.displayName} onChange={handleNameChange} maxLength={LIMITS.DISPLAY_NAME} />
           <Field label="Email" value={s.email} readOnly hint="Email address is permanent and cannot be changed." />
           <SelectField label="Timezone" value={s.timezone} options={ianaTimezones} onChange={handleTimezoneChange} />
@@ -138,10 +187,12 @@ export function SettingsView({ store }: { store: Store }) {
 
         <Card icon={Lock} title="Security">
           <button className="settings-action-btn" onClick={() => setShowPasswordModal(true)}><Lock size={15} />Change password</button>
+          <button className="settings-action-btn danger-action-btn" onClick={() => setShowDeleteModal(true)}><AlertTriangle size={15} />Delete Account</button>
           <p className="settings-session">Last signed in {new Date().toLocaleDateString()}</p>
         </Card>
       </div>
       {showPasswordModal && <PasswordModal store={store} onClose={() => setShowPasswordModal(false)} />}
+      {showDeleteModal && <DeleteAccountModal store={store} onNavigateToSignup={handleDeleteAccountSuccess} onClose={() => setShowDeleteModal(false)} />}
     </div>
   );
 }

@@ -98,7 +98,11 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['patch'])
     def update_profile(self, request):
         user = request.user
-        serializer = self.get_serializer(user, data=request.data, partial=True)
+        # Remove username from request data to enforce immutability
+        data = request.data.copy()
+        if 'username' in data:
+            del data['username']
+        serializer = self.get_serializer(user, data=data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
@@ -118,6 +122,30 @@ class UserViewSet(viewsets.ModelViewSet):
             user.save()
             return Response({'message': 'Password changed successfully.'})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['delete'], url_path='account')
+    def delete_account(self, request):
+        """Delete user account after verifying current password."""
+        password = request.data.get('password')
+        if not password:
+            return Response(
+                {'error': 'Password is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        user = request.user
+        if not user.check_password(password):
+            return Response(
+                {'error': 'Current password is incorrect.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        # Delete user's authentication token
+        try:
+            user.auth_token.delete()
+        except:
+            pass  # Token may not exist
+        # Delete user (cascade will handle related objects)
+        user.delete()
+        return Response({'message': 'Account deleted successfully.'})
 
 
 class ListViewSet(viewsets.ModelViewSet):
@@ -150,7 +178,52 @@ class TaskViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsOwner]
     
     def get_queryset(self):
-        return Task.objects.filter(user=self.request.user)
+        queryset = Task.objects.filter(user=self.request.user)
+        
+        # Search filter (case-insensitive title or description)
+        search = self.request.query_params.get('search', None)
+        if search:
+            from django.db.models import Q
+            queryset = queryset.filter(
+                Q(title__icontains=search) | Q(description__icontains=search)
+            )
+        
+        # Completed filter
+        completed = self.request.query_params.get('completed', None)
+        if completed is not None:
+            if completed.lower() == 'true':
+                queryset = queryset.filter(completed=True)
+            elif completed.lower() == 'false':
+                queryset = queryset.filter(completed=False)
+        
+        # List filter
+        list_id = self.request.query_params.get('list', None)
+        if list_id:
+            queryset = queryset.filter(list_id=list_id)
+        
+        # Tag filter (using 'tags' as the param name based on test)
+        tag_id = self.request.query_params.get('tags', None)
+        if tag_id:
+            queryset = queryset.filter(tags__id=tag_id)
+        
+        # Due date filter
+        due_date = self.request.query_params.get('due_date', None)
+        if due_date:
+            queryset = queryset.filter(due_date=due_date)
+        
+        # Today filter
+        today = self.request.query_params.get('today', None)
+        if today and today.lower() == 'true':
+            from datetime import date
+            queryset = queryset.filter(due_date=date.today())
+        
+        # Upcoming filter (incomplete tasks with future due dates)
+        upcoming = self.request.query_params.get('upcoming', None)
+        if upcoming and upcoming.lower() == 'true':
+            from datetime import date
+            queryset = queryset.filter(completed=False, due_date__gt=date.today())
+        
+        return queryset.distinct()
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -199,8 +272,8 @@ class TaskViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
     
-    @action(detail=True, methods=['patch', 'put'], url_path='subtasks/(?P<subtask_pk>[^/.]+)')
-    def update_subtask(self, request, pk=None, subtask_pk=None):
+    @action(detail=False, methods=['patch', 'put'], url_path='subtasks/(?P<subtask_pk>[^/.]+)/update')
+    def update_subtask(self, request, subtask_pk=None):
         try:
             subtask = Subtask.objects.get(id=subtask_pk, task__user=request.user)
             title = request.data.get('title', '').strip()[:200]

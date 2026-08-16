@@ -242,3 +242,17 @@ button { cursor: pointer; }
 .subtask-action:hover { opacity: 1; color: #102640; }
 
 /* ---- Dark mode removed - light theme only ---- */
+
+/* ---- Delete Account Modal ---- */
+.delete-account-modal { min-width: 380px; }
+.delete-account-header { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 16px; }
+.delete-account-icon { color: #c0392b; }
+.delete-account-title { font: 700 20px/1.2 'Space Grotesk', sans-serif; color: #102640; margin: 0; text-align: center; }
+.delete-account-warning { font-size: 13px; color: #3a4350; line-height: 1.5; margin: 0 0 16px; text-align: center; }
+.danger-action-btn { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+.danger-action-btn:hover { background: #ffe8a1; }
+.danger-button { background: #dc3545; color: white; border: 0; }
+.danger-button:hover:not(:disabled) { background: #c82333; }
+.danger-button:disabled { opacity: .6; cursor: not-allowed; }
+.delete-btn { background: #dc3545; color: white; }
+.delete-btn:hover:not(:disabled) { background: #c82333; }

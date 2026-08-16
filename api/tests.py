@@ -108,8 +108,11 @@ class ProfileTests(TestCase):
         """Test updating display name (username)."""
         data = {"username": "newdisplayname"}
         response = self.client.patch("/api/user/update_profile/", data)
+        # Username is now immutable - should be ignored/unchanged
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["username"], "newdisplayname")
+        # Verify username didn't change
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.username, "profileuser")
         
     def test_update_bio(self):
         """Test updating bio."""
@@ -634,7 +637,7 @@ class SubtaskTests(TestCase):
     def test_update_subtask(self):
         """Test updating a subtask."""
         subtask = Subtask.objects.create(task=self.task, title="Old Title")
-        url = f"/api/tasks/{self.task.id}/subtasks/{subtask.id}/"
+        url = f"/api/tasks/subtasks/{subtask.id}/update/"
         data = {"title": "New Title"}
         response = self.client.patch(url, data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -652,8 +655,8 @@ class SubtaskTests(TestCase):
         """Test user cannot access another user's subtask."""
         other_task = Task.objects.create(user=self.user2, title="Other Task")
         other_subtask = Subtask.objects.create(task=other_task, title="Other Subtask")
-        url = f"/api/tasks/{other_task.id}/subtasks/{other_subtask.id}/"
-        response = self.client.get(url)
+        url = f"/api/tasks/subtasks/{other_subtask.id}/update/"
+        response = self.client.patch(url, {"title": "Hacked"})
         # Should 404 because parent task doesn't belong to user
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -1030,3 +1033,133 @@ class UnauthenticatedAccessTests(TestCase):
         """Test user/me endpoint requires authentication."""
         response = self.client.get("/api/user/me/")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class DeleteAccountTests(TestCase):
+    """Test delete account functionality."""
+    
+    def setUp(self):
+        self.client = APIClient()
+        self.register_url = "/api/auth/register/"
+        self.user_data = {
+            "username": "deleteuser",
+            "email": "delete@example.com",
+            "password": "password123"
+        }
+        # Register and login
+        response = self.client.post(self.register_url, self.user_data)
+        self.token = response.data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
+        self.user = User.objects.get(email="delete@example.com")
+        
+        # Create some data for the user
+        from api.models import List, Tag, Task, Note, CalendarEvent
+        from datetime import date, time
+        self.test_list = List.objects.create(user=self.user, label="Test List")
+        self.test_tag = Tag.objects.create(user=self.user, label="testtag")
+        self.test_task = Task.objects.create(user=self.user, title="Test Task")
+        self.test_note = Note.objects.create(user=self.user, title="Test Note")
+        self.test_event = CalendarEvent.objects.create(
+            user=self.user, 
+            title="Test Event",
+            date=date(2026, 8, 29),
+            start_time=time(10, 0),
+            end_time=time(11, 0)
+        )
+        
+    def test_delete_account_success(self):
+        """Test successful account deletion with correct password."""
+        data = {"password": "password123"}
+        response = self.client.delete("/api/user/account/", data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("deleted", response.data.get("message", "").lower())
+        
+        # Verify user is deleted
+        self.assertFalse(User.objects.filter(email="delete@example.com").exists())
+        
+        # Verify all associated data is deleted (cascade)
+        from api.models import List, Tag, Task, Note, CalendarEvent
+        self.assertEqual(List.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(Tag.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(Task.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(Note.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(CalendarEvent.objects.filter(user=self.user).count(), 0)
+        
+    def test_delete_account_wrong_password(self):
+        """Test account deletion rejected with wrong password."""
+        data = {"password": "wrongpassword"}
+        response = self.client.delete("/api/user/account/", data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("incorrect", response.data.get("error", "").lower())
+        
+        # Verify user still exists
+        self.assertTrue(User.objects.filter(email="delete@example.com").exists())
+        
+        # Verify all data still exists
+        from api.models import List, Tag, Task, Note, CalendarEvent
+        self.assertEqual(List.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(Tag.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(Task.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(Note.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(CalendarEvent.objects.filter(user=self.user).count(), 1)
+        
+    def test_delete_account_no_password(self):
+        """Test account deletion rejected without password."""
+        data = {}
+        response = self.client.delete("/api/user/account/", data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("required", response.data.get("error", "").lower())
+        
+        # Verify user still exists
+        self.assertTrue(User.objects.filter(email="delete@example.com").exists())
+        
+    def test_delete_account_unauthenticated(self):
+        """Test unauthenticated user cannot delete account."""
+        # Clear credentials
+        self.client.credentials()
+        data = {"password": "password123"}
+        response = self.client.delete("/api/user/account/", data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        
+    def test_delete_account_user_isolation(self):
+        """Test deleting one user doesn't affect another user's data."""
+        # Create second user with their own client to avoid token conflicts
+        from rest_framework.test import APIClient
+        client2 = APIClient()
+        user2_data = {
+            "username": "user2",
+            "email": "user2@example.com",
+            "password": "password456"
+        }
+        response = client2.post(self.register_url, user2_data)
+        user2_token = response.data["token"]
+        client2.credentials(HTTP_AUTHORIZATION=f'Token {user2_token}')
+        user2 = User.objects.get(email="user2@example.com")
+        
+        # Create data for user2 using client2
+        from api.models import List, Tag, Task, Note, CalendarEvent
+        from datetime import date, time
+        user2_list = List.objects.create(user=user2, label="User2 List")
+        user2_tag = Tag.objects.create(user=user2, label="user2tag")
+        user2_task = Task.objects.create(user=user2, title="User2 Task")
+        user2_note = Note.objects.create(user=user2, title="User2 Note")
+        user2_event = CalendarEvent.objects.create(
+            user=user2,
+            title="User2 Event",
+            date=date(2026, 8, 30),
+            start_time=time(14, 0),
+            end_time=time(15, 0)
+        )
+        
+        # Delete first user using original client
+        data = {"password": "password123"}
+        response = self.client.delete("/api/user/account/", data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify user2's data is intact
+        self.assertTrue(User.objects.filter(email="user2@example.com").exists())
+        self.assertEqual(List.objects.filter(user=user2).count(), 1)
+        self.assertEqual(Tag.objects.filter(user=user2).count(), 1)
+        self.assertEqual(Task.objects.filter(user=user2).count(), 1)
+        self.assertEqual(Note.objects.filter(user=user2).count(), 1)
+        self.assertEqual(CalendarEvent.objects.filter(user=user2).count(), 1)

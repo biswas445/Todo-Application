@@ -83,12 +83,12 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
             {isSignup ? (
               <>
                 <label>Email<input type="email" placeholder="email.email@mail.com" value={signupEmail} onChange={(e) => setSignupEmail(e.target.value)} required /></label>
-                <label>Password<div className="password-field"><input type={signupShow ? 'text' : 'password'} placeholder={'\u2022'.repeat(20)} value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} required /><button type="button" onClick={() => setSignupShow(!signupShow)} aria-label="Toggle password visibility">{signupShow ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
+                <label>Password<div className="password-field"><input type={signupShow ? 'text' : 'password'} placeholder="Enter your password" value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} required autoComplete="new-password" /><button type="button" onClick={() => setSignupShow(!signupShow)} aria-label="Toggle password visibility">{signupShow ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
               </>
             ) : (
               <>
                 <label>Email<input type="email" placeholder="email.email@mail.com" value={signinEmail} onChange={(e) => setSigninEmail(e.target.value)} required /></label>
-                <label>Password<div className="password-field"><input type={signinShow ? 'text' : 'password'} placeholder={'\u2022'.repeat(20)} value={signinPassword} onChange={(e) => setSigninPassword(e.target.value)} required /><button type="button" onClick={() => setSigninShow(!signinShow)} aria-label="Toggle password visibility">{signinShow ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
+                <label>Password<div className="password-field"><input type={signinShow ? 'text' : 'password'} placeholder="Enter your password" value={signinPassword} onChange={(e) => setSigninPassword(e.target.value)} required autoComplete="current-password" /><button type="button" onClick={() => setSigninShow(!signinShow)} aria-label="Toggle password visibility">{signinShow ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
               </>
             )}
             {!isSignup && signinError && <p className="auth-error">{signinError}</p>}
