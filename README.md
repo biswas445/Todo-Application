@@ -17,9 +17,16 @@ A modern, full-stack productivity platform built with Django and React.
 - **User Settings**: Profile customization, timezone, date/time formats, and notifications
 - **Security**: User isolation, token authentication, and server-side validation
 
-## Setup
+## Setup Instructions
 
-### Windows
+### Step 1: Clone the Project
+Open your terminal and run:
+```bash
+git clone https://github.com/biswas445/Todo-Application.git
+cd Todo-Application
+```
+
+### Set Up Backend (Django)
 
 **Backend:**
 ```bash
@@ -27,14 +34,8 @@ python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
 python manage.py migrate
+python manage.py createsuperuser
 python manage.py runserver
-```
-
-**Frontend (new terminal):**
-```bash
-cd src
-npm install
-npm run dev
 ```
 
 ### Linux/macOS
@@ -45,6 +46,7 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
+python manage.py createsuperuser
 python manage.py runserver
 ```
 
