@@ -52,3 +52,10 @@ var/
 wheels/
 *.egg
 ```
+# Database
+db.sqlite3
+
+# Bolt config
+.bolt
+.bolt/
+
