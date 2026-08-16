@@ -31,7 +31,15 @@ export function TagsManagementView({ store, onPage }: { store: Store; onPage: (p
     if (editingId && trimmed) {
       store.updateTag(editingId, { label: trimmed, color: editColor });
       setEditingId(null);
+      setEditName('');
+      setEditColor('cyan');
     }
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditName('');
+    setEditColor('cyan');
   };
 
   const handleAdd = (e: React.FormEvent) => {
@@ -76,7 +84,7 @@ export function TagsManagementView({ store, onPage }: { store: Store; onPage: (p
                   <div className="edit-color-row">{colorOptions.map((c) => <button key={c} className={`color-square ${c} ${editColor === c ? 'color-selected' : ''}`} onClick={() => setEditColor(c)} aria-label={`${c} color`} />)}</div>
                   <div className="mgmt-form-actions">
                     <button className="primary-button small-btn" onClick={saveEdit}>Save</button>
-                    <button className="outline-button small-btn" onClick={() => setEditingId(null)}>Cancel</button>
+                    <button className="outline-button small-btn" onClick={cancelEdit}>Cancel</button>
                   </div>
                 </div>
               );

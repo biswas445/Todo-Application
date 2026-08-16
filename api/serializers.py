@@ -21,6 +21,7 @@ def validate_bio_words(value):
 class UserSerializer(serializers.ModelSerializer):
     """Serializer for user profile."""
     email = serializers.EmailField(read_only=True)
+    username = serializers.CharField(read_only=True)  # Username is permanent after registration
     bio = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -34,7 +35,7 @@ class UserSerializer(serializers.ModelSerializer):
             'bio', 'timezone', 'date_format', 'start_of_week',
             'time_format', 'push_notifications', 'task_reminders'
         ]
-        read_only_fields = ['id', 'email']
+        read_only_fields = ['id', 'email', 'username']  # Username is immutable like email
     
     def validate_timezone(self, value):
         """Validate timezone against common IANA timezones."""

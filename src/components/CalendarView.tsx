@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { Task, Store, EntityId } from '@/store/useAppStore';
 import type { CalendarEvent, TaskColor } from '@/types';
@@ -6,7 +6,7 @@ import { LIMITS } from '@/types';
 import { localISO, formatTime, todayStr, formatDate } from '@/utils/format';
 
 type ViewMode = 'Day' | 'Week' | 'Month';
-type CalItem = { id: EntityId; title: string; date: string; time: string; color: string; taskId?: EntityId; isTask: boolean; description?: string };
+type CalItem = { id: string; title: string; date: string; time: string; color: string; taskId?: EntityId; isTask: boolean; description?: string };
 
 const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -47,10 +47,11 @@ export function CalendarView({ store, onOpenTask }: { store: Store; onOpenTask: 
   const [eventError, setEventError] = useState('');
   const [confirmEventDelete, setConfirmEventDelete] = useState(false);
 
-  const allEvents: CalItem[] = [
-    ...data.events.map((e) => ({ id: e.id, title: e.title, date: e.date, time: e.startTime, color: e.color, isTask: false, description: e.description })),
+  // Derive calendar items from current state - no caching
+  const allEvents: CalItem[] = useMemo(() => [
+    ...data.events.map((e) => ({ id: `event-${e.id}`, title: e.title, date: e.date, time: e.startTime, color: e.color, isTask: false, description: e.description })),
     ...data.tasks.filter((t) => t.dueDate).map((t) => ({ id: `task-${t.id}`, title: t.title, date: t.dueDate!, time: '12:00', color: getListColor(t, data.lists), taskId: t.id, isTask: true })),
-  ];
+  ], [data.events, data.tasks, data.lists]);
 
   const goPrev = () => { const d = new Date(current); if (mode === 'Day') d.setDate(d.getDate() - 1); else if (mode === 'Week') d.setDate(d.getDate() - 7); else d.setMonth(d.getMonth() - 1); setCurrent(d); };
   const goNext = () => { const d = new Date(current); if (mode === 'Day') d.setDate(d.getDate() + 1); else if (mode === 'Week') d.setDate(d.getDate() + 7); else d.setMonth(d.getMonth() + 1); setCurrent(d); };
@@ -85,7 +86,22 @@ export function CalendarView({ store, onOpenTask }: { store: Store; onOpenTask: 
   };
   const handleItemClick = (item: CalItem) => {
     if (item.isTask && item.taskId) onOpenTask(item.taskId);
-    else { const ev = data.events.find((e) => e.id === item.id); if (ev) openViewEvent(ev); }
+    else {
+      // Extract event ID safely - only remove prefix if it exists
+      const eventId = item.id.startsWith('event-') ? item.id.slice(6) : item.id;
+      const ev = data.events.find((e) => e.id === eventId);
+      if (ev) openViewEvent(ev);
+    }
+  };
+
+  const handleDeleteEvent = (eventId: EntityId) => {
+    store.deleteEvent(eventId);
+    // Clear all modal state immediately after deletion to prevent stale display
+    setShowEventModal(false);
+    setViewingEventId(null);
+    setEditingEventId(null);
+    setIsEditing(false);
+    setConfirmEventDelete(false);
   };
 
   const closeModal = () => { setShowEventModal(false); setViewingEventId(null); setEditingEventId(null); setIsEditing(false); setConfirmEventDelete(false); };
@@ -124,7 +140,7 @@ export function CalendarView({ store, onOpenTask }: { store: Store; onOpenTask: 
                   <p className="note-detail-body">{viewingEvent.description || 'No description added.'}</p>
                 </div>
                 {confirmEventDelete ? (
-                  <div className="confirm-row"><span>Delete this event?</span><button className="danger-btn" type="button" onClick={() => { store.deleteEvent(viewingEvent.id); closeModal(); }}>Delete</button><button className="outline-button small-btn" type="button" onClick={() => setConfirmEventDelete(false)}>Cancel</button></div>
+                  <div className="confirm-row"><span>Delete this event?</span><button className="danger-btn" type="button" onClick={() => handleDeleteEvent(viewingEvent.id)}><span>Delete</span></button><button className="outline-button small-btn" type="button" onClick={() => setConfirmEventDelete(false)}>Cancel</button></div>
                 ) : (
                   <div className="note-modal-actions">
                     <button className="danger-btn-text" type="button" onClick={() => setConfirmEventDelete(true)} aria-label="Delete event"><Trash2 size={15} />Delete</button>
@@ -150,7 +166,7 @@ export function CalendarView({ store, onOpenTask }: { store: Store; onOpenTask: 
                 <label className="modal-label">Description<textarea className="modal-textarea" value={eventDescription} onChange={(e) => setEventDescription(e.target.value.slice(0, LIMITS.EVENT_DESCRIPTION))} placeholder="Add a description..." maxLength={LIMITS.EVENT_DESCRIPTION} /></label>
                 {eventError && <p className="auth-error">{eventError}</p>}
                 {confirmEventDelete ? (
-                  <div className="confirm-row"><span>Delete this event?</span><button className="danger-btn" type="button" onClick={() => { if (editingEventId) store.deleteEvent(editingEventId); closeModal(); }}>Delete</button><button className="outline-button small-btn" type="button" onClick={() => setConfirmEventDelete(false)}>Cancel</button></div>
+                  <div className="confirm-row"><span>Delete this event?</span><button className="danger-btn" type="button" onClick={() => handleDeleteEvent(editingEventId!)}><span>Delete</span></button><button className="outline-button small-btn" type="button" onClick={() => setConfirmEventDelete(false)}>Cancel</button></div>
                 ) : (
                   <div className="modal-actions">
                     {editingEventId && <button className="danger-btn-text" type="button" onClick={() => setConfirmEventDelete(true)} aria-label="Delete event"><Trash2 size={15} />Delete</button>}
@@ -178,7 +194,13 @@ function DayView({ date, events, onItemClick, timeFormat }: { date: Date; events
       {hours.map((time, idx) => {
         const hourStr = String(9 + idx).padStart(2, '0');
         const slotEvents = dayEvents.filter((e) => e.time.startsWith(hourStr));
-        return <div className="time-slot" key={time}><span>{time}</span><div className="slot-line" />{slotEvents.map((e) => <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'}`} onClick={() => onItemClick(e)}>{e.title}</div>)}</div>;
+        // Handle collision layout for overlapping items
+        const hasMultiple = slotEvents.length > 1;
+        return <div className="time-slot" key={time}><span>{time}</span><div className="slot-line" />{slotEvents.map((e, i) => {
+          const width = hasMultiple ? `${Math.min(100 / slotEvents.length, 48)}%` : 'auto';
+          const left = hasMultiple ? `${(i * (100 / slotEvents.length))}%` : undefined;
+          return <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'}`} style={{ width, left }} onClick={() => onItemClick(e)}>{e.title}</div>;
+        })}</div>;
       })}
     </div>
   );
@@ -191,7 +213,13 @@ function WeekView({ date, events, onItemClick, startOfWeek, timeFormat }: { date
     <div className="week-grid">
       {days.map((d) => {
         const ds = localISO(d); const dayEvents = events.filter((e) => e.date === ds);
-        return <div className="week-day" key={ds}><div className="week-day-head">{dayNames[d.getDay()]} {d.getDate()}</div><div className="week-day-body">{dayEvents.length === 0 ? <span className="week-empty">—</span> : dayEvents.map((e) => <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'} week-event`} onClick={() => onItemClick(e)}>{formatTime(e.time, timeFormat)} {e.title}</div>)}</div></div>;
+        // Handle collision layout for overlapping items in week view
+        const hasMultiple = dayEvents.length > 1;
+        return <div className="week-day" key={ds}><div className="week-day-head">{dayNames[d.getDay()]} {d.getDate()}</div><div className="week-day-body">{dayEvents.length === 0 ? <span className="week-empty">—</span> : dayEvents.map((e, i) => {
+          const width = hasMultiple ? `${Math.min(100 / dayEvents.length, 48)}%` : undefined;
+          const left = hasMultiple ? `${(i * (100 / dayEvents.length))}%` : undefined;
+          return <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'} week-event`} style={{ width, left }} onClick={() => onItemClick(e)}>{formatTime(e.time, timeFormat)} {e.title}</div>;
+        })}</div></div>;
       })}
     </div>
   );

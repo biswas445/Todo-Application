@@ -173,13 +173,22 @@ export function useAppStore() {
     setData((d) => ({ ...d, settings: { ...d.settings, ...updates } }));
   }, []);
 
+  const deleteAccount = useCallback((password: string): { ok: boolean; error?: string } => {
+    if (!data.user) return { ok: false, error: 'No user logged in.' };
+    if (data.user.password !== password) return { ok: false, error: 'Incorrect password.' };
+    // Clear all data and reset to defaults
+    const fresh = defaultData();
+    setData({ ...fresh, session: false, user: null });
+    return { ok: true };
+  }, [data.user]);
+
   const resetData = useCallback(() => {
     const fresh = defaultData();
     setData({ ...fresh, session: false });
   }, []);
 
   return {
-    data, signUp, signIn, signOut, changePassword,
+    data, signUp, signIn, signOut, changePassword, deleteAccount,
     addTask, updateTask, deleteTask, toggleTask, addSubtask, toggleSubtask, editSubtask, deleteSubtask,
     addList, updateList, deleteList, addTag, updateTag, deleteTag, updateUser,
     addNote, updateNote, deleteNote,
