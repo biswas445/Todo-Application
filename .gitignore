@@ -1,31 +1,16 @@
 ```
-# Dependencies
-node_modules/
-
-# Build artifacts
-dist/
-build/
-*.js.map
-*.tsbuildinfo
+# Database
+db.sqlite3
 
 # Environment
 .env
 .env.local
 *.env.*
 
-# Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Logs
-*.log
-
-# Coverage
-coverage/
-htmlcov/
-*.coverage
+# Dependencies
+.venv/
+venv/
+node_modules/
 
 # Python
 __pycache__/
@@ -34,24 +19,52 @@ __pycache__/
 *.pyd
 .Python
 *.so
+.Python
 *.egg-info/
 .eggs/
-
-# Temporary files
-*.tmp
-*~
-.DS_Store
-Thumbs.db
-
-# Testing
-.nyc_output/
 .mypy_cache/
 .pytest_cache/
-.tox/
+.coverage
+coverage/
+htmlcov/
 
-# System
+# Build artifacts
+dist/
+build/
+*.egg-info/
+.tox/
+nox/
+.coverage
+
+# Logs
+*.log
+
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Thumbs.db:encryptable
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Compiled and binary files
+*.o
+*.obj
+*.out
+*.exe
+*.dll
+*.so
+*.a
+*.class
 
 # Compressed files
 *.zip
