@@ -24,6 +24,18 @@ function getAuthToken(): string | null {
 
 const nowISO = () => new Date().toISOString();
 
+
+// Normalize API response to ensure it's always an array
+function normalizeCollection<T>(response: unknown): T[] {
+  if (Array.isArray(response)) {
+    return response;
+  }
+  if (response && typeof response === 'object' && 'results' in response && Array.isArray((response as { results: unknown }).results)) {
+    return (response as { results: T[] }).results;
+  }
+  return [];
+}
+
 // Default empty state
 function emptyState(): AppData {
   return {
@@ -68,14 +80,21 @@ export function useAppStore() {
       try {
         setLoading(true);
         // Fetch all data in parallel
-        const [user, lists, tags, tasks, notes, events] = await Promise.all([
+        const [user, listsResponse, tagsResponse, tasksResponse, notesResponse, eventsResponse] = await Promise.all([
           authApi.getMe().catch(() => null),
-          listsApi.getAll().catch(() => []),
-          tagsApi.getAll().catch(() => []),
-          tasksApi.getAll().catch(() => []),
-          notesApi.getAll().catch(() => []),
-          eventsApi.getAll().catch(() => []),
+          listsApi.getAll(),
+          tagsApi.getAll(),
+          tasksApi.getAll(),
+          notesApi.getAll(),
+          eventsApi.getAll(),
         ]);
+
+        // Normalize all collections to arrays
+        const lists = normalizeCollection<ListItem>(listsResponse);
+        const tags = normalizeCollection<TagItem>(tagsResponse);
+        const tasks = normalizeCollection<Task>(tasksResponse);
+        const notes = normalizeCollection<Note>(notesResponse);
+        const events = normalizeCollection<CalendarEvent>(eventsResponse);
 
         if (user) {
           const settings = await settingsApi.getSettings().catch(() => ({
@@ -139,7 +158,8 @@ export function useAppStore() {
       });
 
       saveAuthToken(response.token);
-      
+
+      // For new signup, initialize with empty arrays (no need to fetch since user is new)
       const settings = await settingsApi.getSettings().catch(() => ({
         displayName: name.trim(),
         email: email.trim(),
@@ -182,13 +202,20 @@ export function useAppStore() {
       const response = await authApi.login({ email: email.trim(), password });
       saveAuthToken(response.token);
 
-      const [lists, tags, tasks, notes, events] = await Promise.all([
-        listsApi.getAll().catch(() => []),
-        tagsApi.getAll().catch(() => []),
-        tasksApi.getAll().catch(() => []),
-        notesApi.getAll().catch(() => []),
-        eventsApi.getAll().catch(() => []),
+      const [listsResponse, tagsResponse, tasksResponse, notesResponse, eventsResponse] = await Promise.all([
+        listsApi.getAll(),
+        tagsApi.getAll(),
+        tasksApi.getAll(),
+        notesApi.getAll(),
+        eventsApi.getAll(),
       ]);
+
+      // Normalize all collections to arrays
+      const lists = normalizeCollection<ListItem>(listsResponse);
+      const tags = normalizeCollection<TagItem>(tagsResponse);
+      const tasks = normalizeCollection<Task>(tasksResponse);
+      const notes = normalizeCollection<Note>(notesResponse);
+      const events = normalizeCollection<CalendarEvent>(eventsResponse);
 
       const settings = await settingsApi.getSettings().catch(() => ({
         displayName: `${response.user.first_name || ''} ${response.user.last_name || ''}`.trim() || response.user.username,
