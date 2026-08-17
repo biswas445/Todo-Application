@@ -24,7 +24,7 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
     <>
       {mobileOpen && <div className="sidebar-overlay" onClick={() => setMobileOpen(false)} />}
       <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
-        <div className="sidebar-head"><h2>Menu</h2><button className="sidebar-close-mobile" onClick={() => setMobileOpen(false)} aria-label="Close menu"><X size={18} /></button></div>
+        <div className="sidebar-head"><h2>Menu</h2></div>
         <div className="search-box"><Search size={16} /><input ref={searchInputRef} placeholder="Search" value={searchQuery} onChange={(e) => onSearch(e.target.value)} aria-label="Search tasks" />{searchQuery && <button className="search-clear" onClick={onClearSearch} aria-label="Clear search"><X size={14} /></button>}</div>
 
         <p className="side-label">TASKS</p>

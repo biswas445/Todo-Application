@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'rest_framework.authtoken',
+    'channels',
     'api',
 ]
 
@@ -161,3 +162,18 @@ REST_FRAMEWORK = {
 
 # Custom user model
 AUTH_USER_MODEL = 'api.User'
+
+# Channels configuration for WebSockets
+ASGI_APPLICATION = 'organic_mind_backend.asgi.application'
+
+# Channel layers configuration (using in-memory for development, Redis for production)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        # For production with Redis:
+        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        # 'CONFIG': {
+        #     'hosts': [('localhost', 6379)],
+        # },
+    },
+}

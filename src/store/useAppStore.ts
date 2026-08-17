@@ -149,7 +149,7 @@ export function useAppStore() {
 
     try {
       setLoading(true);
-      const response = await authApi.register({
+      await authApi.register({
         username: email.trim(),
         email: email.trim(),
         password,
@@ -157,32 +157,8 @@ export function useAppStore() {
         last_name: name.trim().split(' ').slice(1).join(' '),
       });
 
-      saveAuthToken(response.token);
-
-      // For new signup, initialize with empty arrays (no need to fetch since user is new)
-      const settings = await settingsApi.getSettings().catch(() => ({
-        displayName: name.trim(),
-        email: email.trim(),
-        timezone: 'UTC',
-        bio: '',
-        language: 'English (US)',
-        dateFormat: 'DD-MM-YY',
-        startOfWeek: 'Monday',
-        timeFormat: '12-hour',
-        pushNotifications: true,
-        taskReminders: false,
-      }));
-
-      setData({
-        tasks: [],
-        lists: [],
-        tags: [],
-        notes: [],
-        events: [],
-        user: mapApiUserToFrontend(response.user),
-        settings,
-        session: true,
-      });
+      // Do NOT auto-login after signup. Just return success.
+      // User will be redirected to signin page to manually log in.
       return { ok: true };
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Registration failed';
