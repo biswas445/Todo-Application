@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ChevronRight, Pencil, Plus, Trash2, CheckSquare } from 'lucide-react';
 import type { Store, EntityId } from '@/store/useAppStore';
 import type { TaskColor } from '@/types';
 import { LIMITS } from '@/types';
@@ -16,6 +16,25 @@ export function TagsManagementView({ store, onPage }: { store: Store; onPage: (p
   const [editName, setEditName] = useState('');
   const [editColor, setEditColor] = useState<TaskColor>('cyan');
   const [confirmDelete, setConfirmDelete] = useState<EntityId | null>(null);
+  
+  // Bulk selection state
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedTagIds, setSelectedTagIds] = useState<Set<EntityId>>(new Set());
+  
+  const toggleSelection = (tagId: EntityId) => {
+    setSelectedTagIds(prev => {
+      const next = new Set(prev);
+      if (next.has(tagId)) next.delete(tagId);
+      else next.add(tagId);
+      return next;
+    });
+  };
+  
+  const deleteSelected = () => {
+    selectedTagIds.forEach(id => store.deleteTag(id));
+    setSelectedTagIds(new Set());
+    setIsSelectionMode(false);
+  };
 
   const startEdit = (id: EntityId) => {
     const tag = data.tags.find((t) => t.id === id);
@@ -56,7 +75,25 @@ export function TagsManagementView({ store, onPage }: { store: Store; onPage: (p
     <div className="view-content management-view">
       <div className="view-heading">
         <div><h1>Tags</h1><span className="count-badge">{data.tags.length}</span></div>
-        <button className="outline-button" onClick={() => setAdding(true)}><Plus size={16} />Add Tag</button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {isSelectionMode ? (
+            <>
+              <button className="outline-button small-btn" onClick={() => { setIsSelectionMode(false); setSelectedTagIds(new Set()); }}>Cancel</button>
+              {selectedTagIds.size > 0 && (
+                <button className="danger-btn small-btn" onClick={deleteSelected}>Delete ({selectedTagIds.size})</button>
+              )}
+            </>
+          ) : (
+            <>
+              <button className="outline-button" onClick={() => setAdding(true)}><Plus size={16} />Add Tag</button>
+              {data.tags.length > 0 && (
+                <button className="more-button" aria-label="Select tags" onClick={() => setIsSelectionMode(true)}>
+                  <CheckSquare size={20} />
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {adding && (
@@ -90,8 +127,16 @@ export function TagsManagementView({ store, onPage }: { store: Store; onPage: (p
               );
             }
             return (
-              <div key={tag.id} className="mgmt-card mgmt-card-tag">
-                <div className="mgmt-card-head">
+              <div key={tag.id} className="mgmt-card mgmt-card-tag" style={{ position: 'relative' }}>
+                {isSelectionMode && (
+                  <input
+                    type="checkbox"
+                    checked={selectedTagIds.has(tag.id)}
+                    onChange={() => toggleSelection(tag.id)}
+                    style={{ position: 'absolute', top: '12px', left: '12px', zIndex: 10 }}
+                  />
+                )}
+                <div className="mgmt-card-head" style={{ paddingLeft: isSelectionMode ? '32px' : '0' }}>
                   <span className={`tag ${tagClassMap[tag.color]}`}>{tag.label}</span>
                   <button className="mgmt-card-title mgmt-card-title-tag" onClick={() => onPage(`tag-${tag.id}`)} title={tag.label}><ChevronRight size={16} /></button>
                 </div>
@@ -100,15 +145,19 @@ export function TagsManagementView({ store, onPage }: { store: Store; onPage: (p
                   <span>{count} total</span>
                 </div>
                 <div className="mgmt-card-actions">
-                  <button className="side-action-btn" onClick={() => startEdit(tag.id)} aria-label={`Edit ${tag.label}`}><Pencil size={14} />Edit</button>
-                  {confirmDelete === tag.id ? (
-                    <span className="mgmt-confirm-inline">
-                      <span>Delete?</span>
-                      <button className="danger-btn small-btn" onClick={() => { store.deleteTag(tag.id); setConfirmDelete(null); }}>Yes</button>
-                      <button className="outline-button small-btn" onClick={() => setConfirmDelete(null)}>No</button>
-                    </span>
-                  ) : (
-                    <button className="side-action-btn danger" onClick={() => setConfirmDelete(tag.id)} aria-label={`Delete ${tag.label}`}><Trash2 size={14} />Delete</button>
+                  {!isSelectionMode && (
+                    <>
+                      <button className="side-action-btn" onClick={() => startEdit(tag.id)} aria-label={`Edit ${tag.label}`}><Pencil size={14} />Edit</button>
+                      {confirmDelete === tag.id ? (
+                        <span className="mgmt-confirm-inline">
+                          <span>Delete?</span>
+                          <button className="danger-btn small-btn" onClick={() => { store.deleteTag(tag.id); setConfirmDelete(null); }}>Yes</button>
+                          <button className="outline-button small-btn" onClick={() => setConfirmDelete(null)}>No</button>
+                        </span>
+                      ) : (
+                        <button className="side-action-btn danger" onClick={() => setConfirmDelete(tag.id)} aria-label={`Delete ${tag.label}`}><Trash2 size={14} />Delete</button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

@@ -50,9 +50,10 @@ button { cursor: pointer; }
 .workspace { display: flex; padding: 18px; position: relative; overflow: hidden; }
 .sidebar { width: 274px; flex: 0 0 274px; background: #f5f5f5; border-radius: 14px; padding: 18px 14px; display: flex; flex-direction: column; overflow: hidden; max-height: 100%; }
 .sidebar-head, .search-box, .side-label, .side-nav, .sidebar-bottom { flex: 0 0 auto; }
-.side-section { flex: 0 1 auto; overflow: hidden; }
+.side-section { flex: 0 1 auto; overflow-y: auto; }
 .side-section.tags { flex: 0 1 auto; overflow-y: auto; scrollbar-width: none; }
 .side-section.tags::-webkit-scrollbar { display: none; }
+.side-section.lists { max-height: none; }
 .tag-list-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag-row { position: relative; display: flex; align-items: center; gap: 2px; max-width: 100%; }
 .tag-inner { flex: 1; min-width: 0; max-width: 160px; }
@@ -139,6 +140,8 @@ button { cursor: pointer; }
 .tag-actions { display: flex; gap: 1px; opacity: 0; transition: opacity .15s; flex: 0 0 auto; }
 .tag-row:hover .tag-actions { opacity: 1; }
 .tag-edit-panel { width: 100%; }
+.tag:focus, .tag:focus-visible { outline: none; box-shadow: none; }
+.tag-inner:focus, .tag-inner:focus-visible { outline: none; box-shadow: none; }
 
 /* ---- Edit inline panel ---- */
 .edit-inline-panel { padding: 8px 6px; display: flex; flex-direction: column; gap: 6px; }
@@ -269,3 +272,18 @@ button { cursor: pointer; }
 /* Password field consistency - Auth forms use same style as settings */
 .auth-copy label.settings-field { display: block; font-size: 13px; color: #647080; margin: 14px 0; }
 .auth-copy label.settings-field .password-field { margin-top: 6px; }
+
+/* ---- Stacked events for same-time tasks ---- */
+.stacked-events-container { position: relative !important; }
+.stacked-event { position: static !important; width: 100% !important; margin-bottom: 0 !important; border-radius: 7px 7px 0 0 !important; }
+.stacked-event:last-child { border-radius: 0 0 7px 7px !important; }
+.stack-connector { height: 8px; width: 2px; background: rgba(16, 38, 64, 0.3); margin: 0 auto; }
+
+/* ---- Notifications view ---- */
+.notifications-list { display: flex; flex-direction: column; gap: 12px; }
+.notification-item { border: 1px solid #e7e7e7; border-radius: 8px; padding: 14px 16px; background: #fff; }
+.notification-item.unread { border-left: 3px solid #ffcd30; }
+.notification-item.read { opacity: 0.7; }
+.notification-content { display: flex; flex-direction: column; gap: 6px; }
+.notification-message { font-size: 13px; color: #102640; margin: 0; }
+.notification-timestamp { font-size: 11px; color: #7c848b; }
