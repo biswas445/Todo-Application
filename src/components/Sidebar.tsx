@@ -1,5 +1,5 @@
 import { useState, type RefObject } from 'react';
-import { ArrowLeft, ArrowRight, CalendarDays, FileText, List, Menu as MenuIcon, Search, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bell, CalendarDays, FileText, List, Menu as MenuIcon, Search, SlidersHorizontal, X } from 'lucide-react';
 import type { Store } from '@/store/useAppStore';
 import { todayStr } from '@/utils/format';
 
@@ -8,9 +8,6 @@ type Props = {
   searchQuery: string; onSearch: (q: string) => void; onClearSearch: () => void;
   searchInputRef?: RefObject<HTMLInputElement>;
 };
-
-const MAX_LISTS_VISIBLE = 4;
-const MAX_TAGS_VISIBLE = 6;
 
 export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSearch, searchInputRef }: Props) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -22,9 +19,6 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
   const stickyWallCount = data.notes.length;
 
   const nav = (target: string) => { onPage(target); setMobileOpen(false); };
-
-  const visibleLists = data.lists.slice(0, MAX_LISTS_VISIBLE);
-  const visibleTags = data.tags.slice(0, MAX_TAGS_VISIBLE);
 
   return (
     <>
@@ -42,8 +36,13 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
         </nav>
 
         <div className="side-section">
+          <p className="side-label">NOTIFICATIONS</p>
+          <button className={page === 'Notifications' ? 'active' : ''} onClick={() => nav('Notifications')}><Bell size={16} /><span>Notifications</span>{data.notifications.length > 0 && <small>{data.notifications.length}</small>}</button>
+        </div>
+
+        <div className="side-section lists">
           <p className="side-label">LISTS</p>
-          {visibleLists.map((list) => {
+          {data.lists.map((list) => {
             const count = data.tasks.filter((t) => t.listId === list.id && !t.completed).length;
             return (
               <div key={list.id} className={`side-link-row ${page === `list-${list.id}` ? 'active' : ''}`}>
@@ -55,14 +54,13 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
           })}
           <div className="sidebar-more-row">
             <button className="sidebar-more-btn" onClick={() => nav('Lists Management')}>+ Add New List</button>
-            {data.lists.length > MAX_LISTS_VISIBLE && <button className="sidebar-more-btn" onClick={() => nav('Lists Management')}>Show more</button>}
           </div>
         </div>
 
         <div className="side-section tags">
           <p className="side-label">TAGS</p>
           <div className="tag-list-wrap">
-            {visibleTags.map((tag) => {
+            {data.tags.map((tag) => {
               const count = data.tasks.filter((t) => t.tagIds.includes(tag.id) && !t.completed).length;
               const tagClassMap: Record<string, string> = { cyan: 'cyan-tag', coral: 'coral-tag', yellow: 'yellow-tag', green: 'green-tag', blue: 'blue-tag' };
               return (

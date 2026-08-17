@@ -188,19 +188,45 @@ function DayView({ date, events, onItemClick, timeFormat }: { date: Date; events
   const hours = timeFormat === '24-hour'
     ? ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00']
     : ['09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM'];
+  
+  // Group events by exact time for stacking
+  const eventsByTime = new Map<string, CalItem[]>();
+  dayEvents.forEach((e) => {
+    const key = e.time;
+    if (!eventsByTime.has(key)) eventsByTime.set(key, []);
+    eventsByTime.get(key)!.push(e);
+  });
+  
   return (
     <div className="calendar-grid">
       <div className="day-label">{dayNames[date.getDay()].toUpperCase()}</div>
       {hours.map((time, idx) => {
         const hourStr = String(9 + idx).padStart(2, '0');
-        const slotEvents = dayEvents.filter((e) => e.time.startsWith(hourStr));
-        // Handle collision layout for overlapping items
+        const slotEvents = eventsByTime.get(time) || [];
         const hasMultiple = slotEvents.length > 1;
-        return <div className="time-slot" key={time}><span>{time}</span><div className="slot-line" />{slotEvents.map((e, i) => {
-          const width = hasMultiple ? `${Math.min(100 / slotEvents.length, 48)}%` : 'auto';
-          const left = hasMultiple ? `${(i * (100 / slotEvents.length))}%` : undefined;
-          return <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'}`} style={{ width, left }} onClick={() => onItemClick(e)}>{e.title}</div>;
-        })}</div>;
+        
+        return (
+          <div className="time-slot" key={time}>
+            <span>{time}</span>
+            <div className="slot-line" />
+            {slotEvents.length === 0 ? null : hasMultiple ? (
+              // Stack multiple events vertically with connecting lines
+              <div className="stacked-events-container" style={{ display: 'flex', flexDirection: 'column', gap: '0', position: 'absolute', left: '130px', right: '18px', top: '11px' }}>
+                {slotEvents.map((e, i) => (
+                  <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'} stacked-event`} onClick={() => onItemClick(e)}>
+                    {e.title}
+                    {i < slotEvents.length - 1 && <div className="stack-connector" />}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              // Single event - normal rendering
+              slotEvents.map((e) => (
+                <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'}`} onClick={() => onItemClick(e)}>{e.title}</div>
+              ))
+            )}
+          </div>
+        );
       })}
     </div>
   );

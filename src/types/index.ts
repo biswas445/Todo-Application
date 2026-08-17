@@ -13,13 +13,29 @@ export type ListItem = { id: EntityId; label: string; color: TaskColor; createdA
 export type TagItem = { id: EntityId; label: string; color: TaskColor; createdAt: string; updatedAt: string };
 export type Note = { id: EntityId; title: string; body: string; color: NoteColor; createdAt: string; updatedAt: string };
 export type CalendarEvent = { id: EntityId; title: string; description: string; date: string; startTime: string; endTime: string; color: TaskColor; createdAt: string; updatedAt: string };
-export type User = { id: EntityId; name: string; email: string; password: string; bio: string; timezone: string };
+export type Notification = { id: EntityId; message: string; timestamp: string; read: boolean };
+export type User = { 
+  id: EntityId; 
+  username: string;
+  name: string; 
+  email: string; 
+  password: string; 
+  bio: string; 
+  timezone: string;
+  first_name?: string;
+  last_name?: string;
+  date_format?: string;
+  start_of_week?: string;
+  time_format?: string;
+  push_notifications?: boolean;
+  task_reminders?: boolean;
+};
 export type Settings = {
   displayName: string; email: string; timezone: string; bio: string; language: string; dateFormat: string;
   startOfWeek: string; timeFormat: string;
   pushNotifications: boolean; taskReminders: boolean;
 };
-export type AppData = { tasks: Task[]; lists: ListItem[]; tags: TagItem[]; notes: Note[]; events: CalendarEvent[]; user: User | null; settings: Settings; session: boolean };
+export type AppData = { tasks: Task[]; lists: ListItem[]; tags: TagItem[]; notes: Note[]; events: CalendarEvent[]; notifications: Notification[]; user: User | null; settings: Settings; session: boolean };
 
 export const LIMITS = {
   TASK_TITLE: 120,

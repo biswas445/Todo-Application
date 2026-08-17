@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ChevronRight, Pencil, Plus, Trash2, CheckSquare } from 'lucide-react';
 import type { Store, EntityId } from '@/store/useAppStore';
 import type { TaskColor } from '@/types';
 import { LIMITS } from '@/types';
@@ -15,6 +15,25 @@ export function ListsManagementView({ store, onPage }: { store: Store; onPage: (
   const [editName, setEditName] = useState('');
   const [editColor, setEditColor] = useState<TaskColor>('coral');
   const [confirmDelete, setConfirmDelete] = useState<EntityId | null>(null);
+  
+  // Bulk selection state
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedListIds, setSelectedListIds] = useState<Set<EntityId>>(new Set());
+  
+  const toggleSelection = (listId: EntityId) => {
+    setSelectedListIds(prev => {
+      const next = new Set(prev);
+      if (next.has(listId)) next.delete(listId);
+      else next.add(listId);
+      return next;
+    });
+  };
+  
+  const deleteSelected = () => {
+    selectedListIds.forEach(id => store.deleteList(id));
+    setSelectedListIds(new Set());
+    setIsSelectionMode(false);
+  };
 
   const startEdit = (id: EntityId) => {
     const list = data.lists.find((l) => l.id === id);
@@ -47,7 +66,25 @@ export function ListsManagementView({ store, onPage }: { store: Store; onPage: (
     <div className="view-content management-view">
       <div className="view-heading">
         <div><h1>Lists</h1><span className="count-badge">{data.lists.length}</span></div>
-        <button className="outline-button" onClick={() => setAdding(true)}><Plus size={16} />Add New List</button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {isSelectionMode ? (
+            <>
+              <button className="outline-button small-btn" onClick={() => { setIsSelectionMode(false); setSelectedListIds(new Set()); }}>Cancel</button>
+              {selectedListIds.size > 0 && (
+                <button className="danger-btn small-btn" onClick={deleteSelected}>Delete ({selectedListIds.size})</button>
+              )}
+            </>
+          ) : (
+            <>
+              <button className="outline-button" onClick={() => setAdding(true)}><Plus size={16} />Add New List</button>
+              {data.lists.length > 0 && (
+                <button className="more-button" aria-label="Select lists" onClick={() => setIsSelectionMode(true)}>
+                  <CheckSquare size={20} />
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {adding && (
@@ -81,8 +118,16 @@ export function ListsManagementView({ store, onPage }: { store: Store; onPage: (
               );
             }
             return (
-              <div key={list.id} className="mgmt-card">
-                <div className="mgmt-card-head">
+              <div key={list.id} className="mgmt-card" style={{ position: 'relative' }}>
+                {isSelectionMode && (
+                  <input
+                    type="checkbox"
+                    checked={selectedListIds.has(list.id)}
+                    onChange={() => toggleSelection(list.id)}
+                    style={{ position: 'absolute', top: '12px', left: '12px', zIndex: 10 }}
+                  />
+                )}
+                <div className="mgmt-card-head" style={{ paddingLeft: isSelectionMode ? '32px' : '0' }}>
                   <i className={`color-square ${list.color}`} />
                   <button className="mgmt-card-title" onClick={() => onPage(`list-${list.id}`)} title={list.label}>{list.label}</button>
                   <ChevronRight size={16} className="mgmt-chevron" />
@@ -92,15 +137,19 @@ export function ListsManagementView({ store, onPage }: { store: Store; onPage: (
                   <span>{count} total</span>
                 </div>
                 <div className="mgmt-card-actions">
-                  <button className="side-action-btn" onClick={() => startEdit(list.id)} aria-label={`Edit ${list.label}`}><Pencil size={14} />Edit</button>
-                  {confirmDelete === list.id ? (
-                    <span className="mgmt-confirm-inline">
-                      <span>Delete?</span>
-                      <button className="danger-btn small-btn" onClick={() => { store.deleteList(list.id); setConfirmDelete(null); }}>Yes</button>
-                      <button className="outline-button small-btn" onClick={() => setConfirmDelete(null)}>No</button>
-                    </span>
-                  ) : (
-                    <button className="side-action-btn danger" onClick={() => setConfirmDelete(list.id)} aria-label={`Delete ${list.label}`}><Trash2 size={14} />Delete</button>
+                  {!isSelectionMode && (
+                    <>
+                      <button className="side-action-btn" onClick={() => startEdit(list.id)} aria-label={`Edit ${list.label}`}><Pencil size={14} />Edit</button>
+                      {confirmDelete === list.id ? (
+                        <span className="mgmt-confirm-inline">
+                          <span>Delete?</span>
+                          <button className="danger-btn small-btn" onClick={() => { store.deleteList(list.id); setConfirmDelete(null); }}>Yes</button>
+                          <button className="outline-button small-btn" onClick={() => setConfirmDelete(null)}>No</button>
+                        </span>
+                      ) : (
+                        <button className="side-action-btn danger" onClick={() => setConfirmDelete(list.id)} aria-label={`Delete ${list.label}`}><Trash2 size={14} />Delete</button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
