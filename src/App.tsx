@@ -45,37 +45,121 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
   return (
     <div className="view-content upcoming-view">
       <div className="view-heading"><div><h1>Upcoming</h1><span className="count-badge">{total}</span></div><button className="more-button" aria-label="More options"><MoreHorizontal size={20} /></button></div>
-      <div className="upcoming-grid">
-        <section className="task-card upcoming-section">
-          <div className="section-header">
-            <h2>Today</h2>
-            <span className="count-badge">{todayTasks.filter(t => !t.completed).length}</span>
+      
+      {/* Horizontal Grid Layout: Today | Tomorrow | This Week */}
+      <div className="upcoming-grid" style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+        gap: '24px',
+        width: '100%',
+        marginTop: '24px'
+      }}>
+        
+        {/* Today Section */}
+        <section className="task-card upcoming-section" style={{
+          background: '#ffffff',
+          borderRadius: '12px',
+          padding: '20px',
+          border: '1px solid #e5e7eb',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '400px'
+        }}>
+          <div className="section-header" style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '16px',
+            paddingBottom: '12px',
+            borderBottom: '2px solid #f3f4f6'
+          }}>
+            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937', margin: 0 }}>Today</h2>
+            <span className="count-badge" style={{
+              background: '#eff6ff',
+              color: '#2563eb',
+              padding: '4px 12px',
+              borderRadius: '20px',
+              fontSize: '14px',
+              fontWeight: '600'
+            }}>{todayTasks.filter(t => !t.completed).length}</span>
           </div>
           <AddTask store={store} defaultDueDate={today} />
-          <div className="task-card-list">
+          <div className="task-card-list" style={{ flex: 1, marginTop: '16px' }}>
             {todayTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for today.</p></div> : todayTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
           </div>
         </section>
-        <section className="task-card upcoming-section">
-          <div className="section-header">
-            <h2>Tomorrow</h2>
-            <span className="count-badge">{tomorrowTasks.filter(t => !t.completed).length}</span>
+
+        {/* Tomorrow Section */}
+        <section className="task-card upcoming-section" style={{
+          background: '#ffffff',
+          borderRadius: '12px',
+          padding: '20px',
+          border: '1px solid #e5e7eb',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '400px'
+        }}>
+          <div className="section-header" style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '16px',
+            paddingBottom: '12px',
+            borderBottom: '2px solid #f3f4f6'
+          }}>
+            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937', margin: 0 }}>Tomorrow</h2>
+            <span className="count-badge" style={{
+              background: '#eff6ff',
+              color: '#2563eb',
+              padding: '4px 12px',
+              borderRadius: '20px',
+              fontSize: '14px',
+              fontWeight: '600'
+            }}>{tomorrowTasks.filter(t => !t.completed).length}</span>
           </div>
           <AddTask store={store} defaultDueDate={tomorrow} />
-          <div className="task-card-list">
+          <div className="task-card-list" style={{ flex: 1, marginTop: '16px' }}>
             {tomorrowTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for tomorrow.</p></div> : tomorrowTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
           </div>
         </section>
-        <section className="task-card upcoming-section">
-          <div className="section-header">
-            <h2>This Week</h2>
-            <span className="count-badge">{weekTasks.filter(t => !t.completed).length}</span>
+
+        {/* This Week Section */}
+        <section className="task-card upcoming-section" style={{
+          background: '#ffffff',
+          borderRadius: '12px',
+          padding: '20px',
+          border: '1px solid #e5e7eb',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '400px'
+        }}>
+          <div className="section-header" style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '16px',
+            paddingBottom: '12px',
+            borderBottom: '2px solid #f3f4f6'
+          }}>
+            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937', margin: 0 }}>This Week</h2>
+            <span className="count-badge" style={{
+              background: '#eff6ff',
+              color: '#2563eb',
+              padding: '4px 12px',
+              borderRadius: '20px',
+              fontSize: '14px',
+              fontWeight: '600'
+            }}>{weekTasks.filter(t => !t.completed).length}</span>
           </div>
           <AddTask store={store} defaultDueDate={weekEnd} />
-          <div className="task-card-list">
+          <div className="task-card-list" style={{ flex: 1, marginTop: '16px' }}>
             {weekTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for this week.</p></div> : weekTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
           </div>
         </section>
+
       </div>
     </div>
   );

@@ -18,6 +18,8 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
 
   const todayCount = data.tasks.filter((t) => t.dueDate === todayStr() && !t.completed).length;
   const upcomingCount = data.tasks.filter((t) => t.dueDate && !t.completed).length;
+  const calendarCount = data.events.length + data.tasks.filter((t) => t.dueDate && !t.completed).length;
+  const stickyWallCount = data.notes.length;
 
   const nav = (target: string) => { onPage(target); setMobileOpen(false); };
 
@@ -35,8 +37,8 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
         <nav className="side-nav">
           <button className={page === 'Upcoming' ? 'active' : ''} onClick={() => nav('Upcoming')}><ArrowRight size={16} /><span>Upcoming</span>{upcomingCount > 0 && <small>{upcomingCount}</small>}</button>
           <button className={page === 'Today' ? 'active' : ''} onClick={() => nav('Today')}><List size={16} /><span>Today</span>{todayCount > 0 && <small>{todayCount}</small>}</button>
-          <button className={page === 'Calendar' ? 'active' : ''} onClick={() => nav('Calendar')}><CalendarDays size={16} /><span>Calendar</span></button>
-          <button className={page === 'Sticky Wall' ? 'active' : ''} onClick={() => nav('Sticky Wall')}><FileText size={16} /><span>Sticky Wall</span></button>
+          <button className={page === 'Calendar' ? 'active' : ''} onClick={() => nav('Calendar')}><CalendarDays size={16} /><span>Calendar</span>{calendarCount > 0 && <small>{calendarCount}</small>}</button>
+          <button className={page === 'Sticky Wall' ? 'active' : ''} onClick={() => nav('Sticky Wall')}><FileText size={16} /><span>Sticky Wall</span>{stickyWallCount > 0 && <small>{stickyWallCount}</small>}</button>
         </nav>
 
         <div className="side-section">
@@ -72,8 +74,7 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
               );
             })}
           </div>
-          <button className="sidebar-more-btn sidebar-show-tags" onClick={() => nav('Tags Management')}>Show tags</button>
-          {data.tags.length > MAX_TAGS_VISIBLE && <button className="sidebar-more-btn" onClick={() => nav('Tags Management')}>Show more</button>}
+          <button className="sidebar-more-btn sidebar-show-tags" onClick={() => nav('Tags Management')}>+ Add Tags</button>
         </div>
 
         <div className="sidebar-bottom">
