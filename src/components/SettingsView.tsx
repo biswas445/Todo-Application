@@ -126,7 +126,7 @@ export function SettingsView({ store, onNavigateToSignup }: { store: Store; onNa
   const s = data.settings;
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const initials = s.displayName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  const initials = (data.user?.name ?? s.displayName).split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const bioWords = useMemo(() => countWords(s.bio), [s.bio]);
 
   const handleBioChange = (v: string) => {
@@ -135,11 +135,6 @@ export function SettingsView({ store, onNavigateToSignup }: { store: Store; onNa
       updateSettings({ bio: v });
       if (data.user) updateUser({ bio: v });
     }
-  };
-
-  const handleNameChange = (v: string) => {
-    updateSettings({ displayName: v });
-    if (data.user) updateUser({ name: v });
   };
 
   const handleTimezoneChange = (v: string) => {
@@ -160,10 +155,9 @@ export function SettingsView({ store, onNavigateToSignup }: { store: Store; onNa
         <Card icon={User} title="Account / Profile">
           <div className="settings-avatar">
             <div className="avatar-circle">{initials}</div>
-            <div><p className="avatar-name">{s.displayName}</p><p className="avatar-email">{s.email}</p></div>
+            <div><p className="avatar-name">{data.user?.name ?? s.displayName}</p><p className="avatar-email">{s.email}</p></div>
           </div>
           <Field label="Username" value={data.user?.name ?? ''} readOnly hint="Username is permanent and cannot be changed." />
-          <Field label="Display name" value={s.displayName} onChange={handleNameChange} maxLength={LIMITS.DISPLAY_NAME} />
           <Field label="Email" value={s.email} readOnly hint="Email address is permanent and cannot be changed." />
           <SelectField label="Timezone" value={s.timezone} options={ianaTimezones} onChange={handleTimezoneChange} />
           <label className="settings-field">

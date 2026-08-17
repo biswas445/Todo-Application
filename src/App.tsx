@@ -9,22 +9,10 @@ import CalendarView from '@/components/CalendarView';
 import SettingsView from '@/components/SettingsView';
 import ListsManagementView from '@/components/ListsManagementView';
 import TagsManagementView from '@/components/TagsManagementView';
-import type { Task, EntityId, ListItem } from '@/types';
+import type { EntityId, ListItem } from '@/types';
 import { todayStr, tomorrowStr, dayOffsetStr } from '@/utils/format';
 
 type AuthView = 'welcome' | 'signin' | 'signup';
-
-function TaskCard({ title, tasks, store, lists, onOpen, defaultDueDate, emptyMessage }: { title: string; tasks: Task[]; store: ReturnType<typeof useAppStore>; lists: ListItem[]; onOpen: (id: EntityId) => void; defaultDueDate: string; emptyMessage: string }) {
-  return (
-    <section className="task-card">
-      <h2>{title}</h2>
-      <AddTask store={store} defaultDueDate={defaultDueDate} />
-      <div className="task-card-list">
-        {tasks.length === 0 ? <div className="empty-state-card"><p>{emptyMessage}</p></div> : tasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
-      </div>
-    </section>
-  );
-}
 
 function TodayView({ store, lists, onOpen }: { store: ReturnType<typeof useAppStore>; lists: ListItem[]; onOpen: (id: EntityId) => void }) {
   const { data } = store;
@@ -58,9 +46,27 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
     <div className="view-content upcoming-view">
       <div className="view-heading"><div><h1>Upcoming</h1><span className="count-badge">{total}</span></div><button className="more-button" aria-label="More options"><MoreHorizontal size={20} /></button></div>
       <div className="upcoming-grid">
-        <TaskCard title="Today" tasks={todayTasks} store={store} lists={lists} onOpen={onOpen} defaultDueDate={today} emptyMessage="No tasks scheduled for today." />
-        <TaskCard title="Tomorrow" tasks={tomorrowTasks} store={store} lists={lists} onOpen={onOpen} defaultDueDate={tomorrow} emptyMessage="No tasks scheduled for tomorrow." />
-        <TaskCard title="This Week" tasks={weekTasks} store={store} lists={lists} onOpen={onOpen} defaultDueDate={weekEnd} emptyMessage="No tasks scheduled for this week." />
+        <section className="task-card upcoming-section">
+          <h2>Today</h2>
+          <AddTask store={store} defaultDueDate={today} />
+          <div className="task-card-list">
+            {todayTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for today.</p></div> : todayTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
+          </div>
+        </section>
+        <section className="task-card upcoming-section">
+          <h2>Tomorrow</h2>
+          <AddTask store={store} defaultDueDate={tomorrow} />
+          <div className="task-card-list">
+            {tomorrowTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for tomorrow.</p></div> : tomorrowTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
+          </div>
+        </section>
+        <section className="task-card upcoming-section">
+          <h2>This Week</h2>
+          <AddTask store={store} defaultDueDate={weekEnd} />
+          <div className="task-card-list">
+            {weekTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for this week.</p></div> : weekTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
+          </div>
+        </section>
       </div>
     </div>
   );
