@@ -50,8 +50,7 @@ python manage.py runserver
 
 **Frontend (new terminal):**
 ```bash
-cd src
-npm install
+npm install 
 npm run dev
 ```
 
