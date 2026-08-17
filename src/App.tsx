@@ -47,21 +47,30 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
       <div className="view-heading"><div><h1>Upcoming</h1><span className="count-badge">{total}</span></div><button className="more-button" aria-label="More options"><MoreHorizontal size={20} /></button></div>
       <div className="upcoming-grid">
         <section className="task-card upcoming-section">
-          <h2>Today</h2>
+          <div className="section-header">
+            <h2>Today</h2>
+            <span className="count-badge">{todayTasks.filter(t => !t.completed).length}</span>
+          </div>
           <AddTask store={store} defaultDueDate={today} />
           <div className="task-card-list">
             {todayTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for today.</p></div> : todayTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
           </div>
         </section>
         <section className="task-card upcoming-section">
-          <h2>Tomorrow</h2>
+          <div className="section-header">
+            <h2>Tomorrow</h2>
+            <span className="count-badge">{tomorrowTasks.filter(t => !t.completed).length}</span>
+          </div>
           <AddTask store={store} defaultDueDate={tomorrow} />
           <div className="task-card-list">
             {tomorrowTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for tomorrow.</p></div> : tomorrowTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
           </div>
         </section>
         <section className="task-card upcoming-section">
-          <h2>This Week</h2>
+          <div className="section-header">
+            <h2>This Week</h2>
+            <span className="count-badge">{weekTasks.filter(t => !t.completed).length}</span>
+          </div>
           <AddTask store={store} defaultDueDate={weekEnd} />
           <div className="task-card-list">
             {weekTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for this week.</p></div> : weekTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}

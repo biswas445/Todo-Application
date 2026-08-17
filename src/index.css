@@ -259,7 +259,8 @@ button { cursor: pointer; }
 
 /* Upcoming sections - horizontal layout */
 .upcoming-section { display: flex; flex-direction: column; max-height: 70vh; min-width: 0; overflow: hidden; }
-.upcoming-section h2 { font: 700 20px 'Space Grotesk', sans-serif; margin: 20px 18px 14px; }
+.upcoming-section .section-header { display: flex; align-items: center; gap: 10px; margin: 20px 18px 14px; }
+.upcoming-section h2 { font: 700 20px 'Space Grotesk', sans-serif; margin: 0; }
 .upcoming-section .add-task { margin: 0 18px 4px; }
 .upcoming-section .task-row { padding-left: 38px; padding-right: 28px; }
 .upcoming-section .task-row:has(.task-meta) { padding-left: 38px; }
