@@ -256,3 +256,15 @@ button { cursor: pointer; }
 .danger-button:disabled { opacity: .6; cursor: not-allowed; }
 .delete-btn { background: #dc3545; color: white; }
 .delete-btn:hover:not(:disabled) { background: #c82333; }
+
+/* Upcoming sections - horizontal layout */
+.upcoming-section { display: flex; flex-direction: column; max-height: 70vh; min-width: 0; overflow: hidden; }
+.upcoming-section h2 { font: 700 20px 'Space Grotesk', sans-serif; margin: 20px 18px 14px; }
+.upcoming-section .add-task { margin: 0 18px 4px; }
+.upcoming-section .task-row { padding-left: 38px; padding-right: 28px; }
+.upcoming-section .task-row:has(.task-meta) { padding-left: 38px; }
+.upcoming-section .task-meta { left: 64px; }
+
+/* Password field consistency - Auth forms use same style as settings */
+.auth-copy label.settings-field { display: block; font-size: 13px; color: #647080; margin: 14px 0; }
+.auth-copy label.settings-field .password-field { margin-top: 6px; }
