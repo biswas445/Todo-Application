@@ -72,7 +72,8 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
               );
             })}
           </div>
-          {data.tags.length > MAX_TAGS_VISIBLE && <button className="sidebar-more-btn sidebar-show-tags" onClick={() => nav('Tags Management')}>Show tags</button>}
+          <button className="sidebar-more-btn sidebar-show-tags" onClick={() => nav('Tags Management')}>Show tags</button>
+          {data.tags.length > MAX_TAGS_VISIBLE && <button className="sidebar-more-btn" onClick={() => nav('Tags Management')}>Show more</button>}
         </div>
 
         <div className="sidebar-bottom">
