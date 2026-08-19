@@ -183,8 +183,18 @@ export function CalendarView({ store, onOpenTask }: { store: Store; onOpenTask: 
 }
 
 function DayView({ date, events, onItemClick, timeFormat }: { date: Date; events: CalItem[]; onItemClick: (item: CalItem) => void; timeFormat: string }) {
-  const dateStr = localISO(date);
-  const dayEvents = events.filter((e) => e.date === dateStr).sort((a, b) => a.time.localeCompare(b.time));
+  // Extract just the date portion (YYYY-MM-DD) for comparison
+  const selectedDateStr = date.toISOString().split('T')[0];
+  
+  // Filter events by comparing just the date parts to handle different date formats
+  const dayEvents = events.filter((e) => {
+    // If e.date is already in YYYY-MM-DD format (10 chars), compare directly
+    if (e.date.length === 10) {
+      return e.date === selectedDateStr;
+    }
+    // If e.date includes time or timezone info, extract just the date part
+    return new Date(e.date).toISOString().split('T')[0] === selectedDateStr;
+  }).sort((a, b) => a.time.localeCompare(b.time));
   const hours = timeFormat === '24-hour'
     ? ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00']
     : ['09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM'];
@@ -200,14 +210,13 @@ function DayView({ date, events, onItemClick, timeFormat }: { date: Date; events
   return (
     <div className="calendar-grid">
       <div className="day-label">{dayNames[date.getDay()].toUpperCase()}</div>
-      {hours.map((time, idx) => {
-        const hourStr = String(9 + idx).padStart(2, '0');
-        const slotEvents = eventsByTime.get(time) || [];
+      {hours.map((timeSlot, idx) => {
+        const slotEvents = eventsByTime.get(timeSlot) || [];
         const hasMultiple = slotEvents.length > 1;
         
         return (
-          <div className="time-slot" key={time}>
-            <span>{time}</span>
+          <div className="time-slot" key={timeSlot}>
+            <span>{timeSlot}</span>
             <div className="slot-line" />
             {slotEvents.length === 0 ? null : hasMultiple ? (
               // Stack multiple events vertically with connecting lines

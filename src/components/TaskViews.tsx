@@ -10,14 +10,16 @@ function CharCounter({ current, max }: { current: number; max: number }) {
   return <span className={`char-counter ${near ? 'char-counter-near' : ''}`}>{current} / {max}</span>;
 }
 
-export function TaskRow({ task, lists, store, onOpen }: { task: Task; lists: ListItem[]; store: Store; onOpen: (id: EntityId) => void }) {
+export function TaskRow({ task, lists, store, onOpen, hideCheckbox }: { task: Task; lists: ListItem[]; store: Store; onOpen: (id: EntityId) => void; hideCheckbox?: boolean }) {
   const list = lists.find((l) => l.id === task.listId);
   const dateFormat = store.data.settings.dateFormat;
   const done = task.subtasks.filter((s: Subtask) => s.completed).length;
   return (
-    <div className={`task-row ${task.completed ? 'completed' : ''}`}>
-      <button className="checkbox" onClick={() => store.toggleTask(task.id)} aria-label={`Mark ${task.title} as ${task.completed ? 'incomplete' : 'complete'}`}>{task.completed && <Check size={12} />}</button>
-      <button className="task-title" onClick={() => onOpen(task.id)} title={task.title}>{task.title}</button>
+    <div className={`task-row ${task.completed ? 'completed' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+      {!hideCheckbox && (
+        <button className="checkbox" onClick={() => store.toggleTask(task.id)} aria-label={`Mark ${task.title} as ${task.completed ? 'incomplete' : 'complete'}`}>{task.completed && <Check size={12} />}</button>
+      )}
+      <button className="task-title" onClick={() => onOpen(task.id)} title={task.title} style={{ flex: 1 }}>{task.title}</button>
       <button className="task-arrow" onClick={() => onOpen(task.id)} aria-label="Open task details"><ChevronRight size={18} /></button>
       {(task.dueDate || list || task.subtasks.length > 0) && (
         <div className="task-meta">

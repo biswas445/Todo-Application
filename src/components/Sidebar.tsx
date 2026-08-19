@@ -1,5 +1,5 @@
-import { useState, type RefObject } from 'react';
-import { ArrowLeft, ArrowRight, Bell, CalendarDays, FileText, List, Menu as MenuIcon, Search, SlidersHorizontal, X } from 'lucide-react';
+import { type RefObject } from 'react';
+import { ArrowLeft, Bell, CalendarDays, FileText, List, Search, SlidersHorizontal, X } from 'lucide-react';
 import type { Store } from '@/store/useAppStore';
 import { todayStr } from '@/utils/format';
 
@@ -10,7 +10,6 @@ type Props = {
 };
 
 export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSearch, searchInputRef }: Props) {
-  const [mobileOpen, setMobileOpen] = useState(false);
   const { data } = store;
 
   const todayCount = data.tasks.filter((t) => t.dueDate === todayStr() && !t.completed).length;
@@ -18,13 +17,11 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
   const calendarCount = data.events.length + data.tasks.filter((t) => t.dueDate && !t.completed).length;
   const stickyWallCount = data.notes.length;
 
-  const nav = (target: string) => { onPage(target); setMobileOpen(false); };
+  const nav = (target: string) => { onPage(target); };
 
   return (
-    <>
-      {mobileOpen && <div className="sidebar-overlay" onClick={() => setMobileOpen(false)} />}
-      <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
-        <div className="sidebar-head"><h2>Menu</h2></div>
+    <aside className="sidebar">
+      <div className="sidebar-head"><h2>Menu</h2></div>
         <div className="search-box"><Search size={16} /><input ref={searchInputRef} placeholder="Search" value={searchQuery} onChange={(e) => onSearch(e.target.value)} aria-label="Search tasks" />{searchQuery && <button className="search-clear" onClick={onClearSearch} aria-label="Clear search"><X size={14} /></button>}</div>
 
         <p className="side-label">TASKS</p>
@@ -36,7 +33,6 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
         </nav>
 
         <div className="side-section">
-          <p className="side-label">NOTIFICATIONS</p>
           <button className={page === 'Notifications' ? 'active' : ''} onClick={() => nav('Notifications')}><Bell size={16} /><span>Notifications</span>{data.notifications.length > 0 && <small>{data.notifications.length}</small>}</button>
         </div>
 
@@ -79,9 +75,7 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
           <button className={`side-link ${page === 'Settings' ? 'active' : ''}`} onClick={() => nav('Settings')}><SlidersHorizontal size={16} />Settings</button>
           <button className="side-link" onClick={store.signOut}><ArrowLeft size={16} />Sign out</button>
         </div>
-      </aside>
-      <button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open menu"><MenuIcon size={20} /></button>
-    </>
+    </aside>
   );
 }
 export default Sidebar;

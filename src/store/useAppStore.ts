@@ -6,7 +6,6 @@ import {
   ApiError 
 } from '@/api';
 
-const STORAGE_KEY = 'organic-mind-state-v1';
 const AUTH_TOKEN_KEY = 'auth_token';
 
 // Helper to save/load auth token
@@ -517,7 +516,7 @@ export function useAppStore() {
       console.error('Failed to update user:', err);
       setError(err instanceof Error ? err.message : 'Failed to update user');
     }
-  }, [data.user]);
+  }, []);
 
   const addNote = useCallback(async (): Promise<Note | null> => {
     try {

@@ -72,7 +72,7 @@ function TodayView({ store, lists, onOpen }: { store: ReturnType<typeof useAppSt
                 style={{ marginRight: '8px' }}
               />
             )}
-            <TaskRow task={task} lists={lists} store={store} onOpen={onOpen} />
+            <TaskRow task={task} lists={lists} store={store} onOpen={onOpen} hideCheckbox={isSelectionMode} />
           </div>
         ))}
       </div>
@@ -217,12 +217,13 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
 function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppStore>; listId: EntityId; onOpen: (id: EntityId) => void }) {
   const { data } = store;
   const list = data.lists.find((l) => l.id === listId);
-  if (!list) return <NotFound />;
   const tasks = data.tasks.filter((t) => t.listId === listId);
   const incomplete = tasks.filter((t) => !t.completed);
   
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<EntityId>>(new Set());
+  
+  if (!list) return <NotFound />;
   
   const toggleSelection = (taskId: EntityId) => {
     setSelectedTaskIds(prev => {
@@ -271,7 +272,7 @@ function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppSt
                 style={{ marginRight: '8px' }}
               />
             )}
-            <TaskRow task={task} lists={data.lists} store={store} onOpen={onOpen} />
+            <TaskRow task={task} lists={data.lists} store={store} onOpen={onOpen} hideCheckbox={isSelectionMode} />
           </div>
         ))}
       </div>
@@ -282,12 +283,13 @@ function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppSt
 function TagView({ store, tagId, onOpen }: { store: ReturnType<typeof useAppStore>; tagId: EntityId; onOpen: (id: EntityId) => void }) {
   const { data } = store;
   const tag = data.tags.find((t) => t.id === tagId);
-  if (!tag) return <NotFound />;
   const tasks = data.tasks.filter((t) => t.tagIds.includes(tagId));
   const incomplete = tasks.filter((t) => !t.completed);
   
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<EntityId>>(new Set());
+  
+  if (!tag) return <NotFound />;
   
   const toggleSelection = (taskId: EntityId) => {
     setSelectedTaskIds(prev => {
@@ -336,7 +338,7 @@ function TagView({ store, tagId, onOpen }: { store: ReturnType<typeof useAppStor
                 style={{ marginRight: '8px' }}
               />
             )}
-            <TaskRow task={task} lists={data.lists} store={store} onOpen={onOpen} />
+            <TaskRow task={task} lists={data.lists} store={store} onOpen={onOpen} hideCheckbox={isSelectionMode} />
           </div>
         ))}
       </div>

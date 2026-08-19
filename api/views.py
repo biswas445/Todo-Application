@@ -167,7 +167,7 @@ class ListViewSet(viewsets.ModelViewSet):
             {
                 'type': 'send_notification',
                 'data': {
-                    'message': f'List "{instance.name}" created',
+                    'message': f'List "{instance.label}" created',
                     'type': 'list_created',
                     'object': ListSerializer(instance).data
                 }
@@ -175,7 +175,7 @@ class ListViewSet(viewsets.ModelViewSet):
         )
     
     def perform_destroy(self, instance):
-        name = instance.name
+        name = instance.label
         super().perform_destroy(instance)
         # Send real-time notification
         async_to_sync(channel_layer.group_send)(
@@ -206,7 +206,7 @@ class TagViewSet(viewsets.ModelViewSet):
             {
                 'type': 'send_notification',
                 'data': {
-                    'message': f'Tag "{instance.name}" created',
+                    'message': f'Tag "{instance.label}" created',
                     'type': 'tag_created',
                     'object': TagSerializer(instance).data
                 }
@@ -214,7 +214,7 @@ class TagViewSet(viewsets.ModelViewSet):
         )
     
     def perform_destroy(self, instance):
-        name = instance.name
+        name = instance.label
         super().perform_destroy(instance)
         # Send real-time notification
         async_to_sync(channel_layer.group_send)(

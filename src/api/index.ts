@@ -134,6 +134,8 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    // Store token automatically on login
+    localStorage.setItem('auth_token', response.token);
     return response;
   },
 
