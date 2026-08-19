@@ -1,47 +1,59 @@
 ```
-# Dependencies
-node_modules/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Environment variables
+# Environment
 .env
 .env.local
 .env.*
 
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
+node_modules/
+
+# Build outputs
+dist/
+build/
+
 # Logs
 *.log
 
-# IDE files
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*.tmp
 
-# Build artifacts
-dist/
-build/
-target/
+# OS
+.DS_Store
+Thumbs.db
 
-# Python specific
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-.venv.bak/
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Coverage reports
-coverage/
-htmlcov/
-.coverage
-*.coverage
-
-# Compression files
+# Compressed files
 *.zip
 *.gz
 *.tar
@@ -65,16 +77,4 @@ htmlcov/
 *.tar.xz
 *.tar.zst
 
-# System files
-.DS_Store
-Thumbs.db
-
-# Database files
-*.sqlite3
-*.db
-
-# Cache directories
-.mypy_cache/
-.pytest_cache/
-.gradle/
 ```

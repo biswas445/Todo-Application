@@ -38,15 +38,22 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
     if (!result.ok) { setSigninError(result.error || 'Sign in failed.'); }
   };
 
-  const handleSignUp = (event: React.FormEvent) => {
+  const handleSignUp = async (event: React.FormEvent) => {
     event.preventDefault();
     setSignupError('');
     setSignupSuccess(false);
-    const result = store.signUp(signupName, signupEmail, signupPassword);
-    if (!result.ok) { setSignupError(result.error || 'Sign up failed.'); return; }
+    const result = await store.signUp(signupName, signupEmail, signupPassword);
+    if (!result.ok) { 
+      setSignupError(result.error || 'Sign up failed.'); 
+      return; 
+    }
+    // Registration successful - show success message and redirect to signin
     setSignupSuccess(true);
-    setSignupName(''); setSignupEmail(''); setSignupPassword('');
-    onView('signin');
+    setSignupName(''); 
+    setSignupEmail(''); 
+    setSignupPassword('');
+    // Wait a moment to show success message, then redirect to signin
+    setTimeout(() => onView('signin'), 1500);
   };
 
   const switchView = (target: AuthView) => {

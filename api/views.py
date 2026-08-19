@@ -7,6 +7,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import get_user_model, authenticate
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 from .models import List, Tag, Task, Subtask, Note, CalendarEvent
 from .serializers import (
     UserSerializer, UserRegistrationSerializer, ChangePasswordSerializer,
@@ -15,6 +17,7 @@ from .serializers import (
 )
 
 User = get_user_model()
+channel_layer = get_channel_layer()
 
 
 class IsOwner(permissions.BasePermission):
@@ -157,7 +160,34 @@ class ListViewSet(viewsets.ModelViewSet):
         return List.objects.filter(user=self.request.user)
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        instance = serializer.save(user=self.request.user)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'data': {
+                    'message': f'List "{instance.name}" created',
+                    'type': 'list_created',
+                    'object': ListSerializer(instance).data
+                }
+            }
+        )
+    
+    def perform_destroy(self, instance):
+        name = instance.name
+        super().perform_destroy(instance)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'data': {
+                    'message': f'List "{name}" deleted',
+                    'type': 'list_deleted'
+                }
+            }
+        )
 
 
 class TagViewSet(viewsets.ModelViewSet):
@@ -169,7 +199,34 @@ class TagViewSet(viewsets.ModelViewSet):
         return Tag.objects.filter(user=self.request.user)
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        instance = serializer.save(user=self.request.user)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'data': {
+                    'message': f'Tag "{instance.name}" created',
+                    'type': 'tag_created',
+                    'object': TagSerializer(instance).data
+                }
+            }
+        )
+    
+    def perform_destroy(self, instance):
+        name = instance.name
+        super().perform_destroy(instance)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'data': {
+                    'message': f'Tag "{name}" deleted',
+                    'type': 'tag_deleted'
+                }
+            }
+        )
 
 
 class TaskViewSet(viewsets.ModelViewSet):
@@ -226,13 +283,67 @@ class TaskViewSet(viewsets.ModelViewSet):
         return queryset.distinct()
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        instance = serializer.save(user=self.request.user)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'task_created',
+                'data': {
+                    'message': f'Task "{instance.title}" created',
+                    'type': 'task_created',
+                    'object': TaskSerializer(instance).data
+                }
+            }
+        )
+    
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Send real-time notification for updates
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'task_updated',
+                'data': {
+                    'message': f'Task "{instance.title}" updated',
+                    'type': 'task_updated',
+                    'object': TaskSerializer(instance).data
+                }
+            }
+        )
+    
+    def perform_destroy(self, instance):
+        title = instance.title
+        super().perform_destroy(instance)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'task_deleted',
+                'data': {
+                    'message': f'Task "{title}" deleted',
+                    'type': 'task_deleted'
+                }
+            }
+        )
     
     @action(detail=True, methods=['post'])
     def toggle(self, request, pk=None):
         task = self.get_object()
         task.completed = not task.completed
         task.save()
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{request.user.id}_notifications",
+            {
+                'type': 'task_updated',
+                'data': {
+                    'message': f'Task "{task.title}" marked as {"completed" if task.completed else "incomplete"}',
+                    'type': 'task_updated',
+                    'object': TaskSerializer(task).data
+                }
+            }
+        )
         return Response(self.get_serializer(task).data)
     
     @action(detail=True, methods=['post'])
@@ -297,7 +408,49 @@ class NoteViewSet(viewsets.ModelViewSet):
         return Note.objects.filter(user=self.request.user)
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        instance = serializer.save(user=self.request.user)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'note_created',
+                'data': {
+                    'message': f'Note "{instance.title}" created',
+                    'type': 'note_created',
+                    'object': NoteSerializer(instance).data
+                }
+            }
+        )
+    
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'data': {
+                    'message': f'Note "{instance.title}" updated',
+                    'type': 'note_updated',
+                    'object': NoteSerializer(instance).data
+                }
+            }
+        )
+    
+    def perform_destroy(self, instance):
+        title = instance.title
+        super().perform_destroy(instance)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'data': {
+                    'message': f'Note "{title}" deleted',
+                    'type': 'note_deleted'
+                }
+            }
+        )
 
 
 class CalendarEventViewSet(viewsets.ModelViewSet):
@@ -309,4 +462,46 @@ class CalendarEventViewSet(viewsets.ModelViewSet):
         return CalendarEvent.objects.filter(user=self.request.user)
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        instance = serializer.save(user=self.request.user)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'event_created',
+                'data': {
+                    'message': f'Event "{instance.title}" created',
+                    'type': 'event_created',
+                    'object': CalendarEventSerializer(instance).data
+                }
+            }
+        )
+    
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'data': {
+                    'message': f'Event "{instance.title}" updated',
+                    'type': 'event_updated',
+                    'object': CalendarEventSerializer(instance).data
+                }
+            }
+        )
+    
+    def perform_destroy(self, instance):
+        title = instance.title
+        super().perform_destroy(instance)
+        # Send real-time notification
+        async_to_sync(channel_layer.group_send)(
+            f"user_{self.request.user.id}_notifications",
+            {
+                'type': 'send_notification',
+                'data': {
+                    'message': f'Event "{title}" deleted',
+                    'type': 'event_deleted'
+                }
+            }
+        )

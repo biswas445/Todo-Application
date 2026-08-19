@@ -416,6 +416,22 @@ function App() {
   const store = useAppStore();
   const [authView, setAuthView] = useState<AuthView>('welcome');
 
+  // Show loading state during initial auth check
+  if (store.loading) {
+    return (
+      <div className="auth-page">
+        <section className="auth-panel brand-panel">
+          <div className="brand-lockup">Organic<br />Mind</div>
+        </section>
+        <section className="auth-panel auth-form-panel">
+          <div className="auth-copy" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '200px' }}>
+            <p>Loading...</p>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   if (store.data.session) return <Workspace store={store} />;
   return <AuthShell view={authView} onView={setAuthView} store={store} />;
 }
