@@ -1,5 +1,13 @@
-Django
+# Django Framework
+django
 djangorestframework
 django-cors-headers
+
+# Real-time Features (WebSockets)
+channels
+daphne
+channels_redis
+
+# Utilities
 Pillow
 pytz
