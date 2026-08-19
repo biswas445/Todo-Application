@@ -17,6 +17,8 @@ describe('End-to-End Tests', () => {
   beforeEach(() => {
     mockFetch.mockClear();
     mockLocalStorage.clear();
+    // Reset module cache to ensure fresh imports for each test
+    vi.resetModules();
   });
 
   describe('Authentication Flow', () => {
@@ -51,11 +53,6 @@ describe('End-to-End Tests', () => {
           ok: true,
           status: 200,
           json: async () => ({ token: 'login-token', user: { id: 1, username: 'testuser' } }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({ id: 1, username: 'testuser', email: 'test@example.com' }),
         });
 
       const { authApi } = await import('@/api/index');
@@ -65,7 +62,10 @@ describe('End-to-End Tests', () => {
       });
 
       expect(result.token).toBe('login-token');
-      expect(mockFetch).toHaveBeenCalledTimes(2); // login + getMe
+      expect(mockFetch).toHaveBeenCalledTimes(1); // login only (getMe removed)
+      
+      // Token should be stored automatically on login
+      expect(mockLocalStorage.setItem).toHaveBeenCalledWith('auth_token', 'login-token');
     });
 
     it('should handle failed login with invalid credentials', async () => {
@@ -85,8 +85,11 @@ describe('End-to-End Tests', () => {
   });
 
   describe('Task CRUD Operations', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       mockLocalStorage.setItem('auth_token', 'test-token');
+      // Clear module cache and reset mocks for each test
+      vi.resetModules();
+      mockFetch.mockClear();
     });
 
     it('should create a task', async () => {
@@ -170,8 +173,10 @@ describe('End-to-End Tests', () => {
   });
 
   describe('List CRUD Operations', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       mockLocalStorage.setItem('auth_token', 'test-token');
+      vi.resetModules();
+      mockFetch.mockClear();
     });
 
     it('should create a list', async () => {
@@ -205,8 +210,10 @@ describe('End-to-End Tests', () => {
   });
 
   describe('Tag CRUD Operations', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       mockLocalStorage.setItem('auth_token', 'test-token');
+      vi.resetModules();
+      mockFetch.mockClear();
     });
 
     it('should create a tag', async () => {
@@ -240,6 +247,11 @@ describe('End-to-End Tests', () => {
   });
 
   describe('Data Isolation', () => {
+    beforeEach(async () => {
+      vi.resetModules();
+      mockFetch.mockClear();
+    });
+    
     it('should only return authenticated user\'s data', async () => {
       mockLocalStorage.setItem('auth_token', 'user1-token');
       

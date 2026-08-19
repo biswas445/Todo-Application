@@ -215,14 +215,14 @@ export function SettingsView({ store, onNavigateToSignup }: { store: Store; onNa
 
         <Card icon={Globe} title="Preferences">
           <Field label="Language" value="English (US)" readOnly />
-          <SelectField label="Date format" value={s.dateFormat} options={['DD-MM-YY', 'MM/DD/YYYY', 'YYYY-MM-DD']} onChange={(v) => {}} />
-          <SelectField label="Start of week" value={s.startOfWeek} options={['Monday', 'Sunday']} onChange={(v) => {}} />
-          <SelectField label="Time format" value={s.timeFormat} options={['12-hour', '24-hour']} onChange={(v) => {}} />
+          <SelectField label="Date format" value={s.dateFormat} options={['DD-MM-YY', 'MM/DD/YYYY', 'YYYY-MM-DD']} onChange={() => {}} />
+          <SelectField label="Start of week" value={s.startOfWeek} options={['Monday', 'Sunday']} onChange={() => {}} />
+          <SelectField label="Time format" value={s.timeFormat} options={['12-hour', '24-hour']} onChange={() => {}} />
         </Card>
 
         <Card icon={Bell} title="Notifications">
-          <Toggle label="Push notifications" desc="Get reminders for upcoming tasks" value={s.pushNotifications} onChange={(v) => {}} />
-          <Toggle label="Task reminders" desc="Daily reminder of what is due" value={s.taskReminders} onChange={(v) => {}} />
+          <Toggle label="Push notifications" desc="Get reminders for upcoming tasks" value={s.pushNotifications} onChange={() => {}} />
+          <Toggle label="Task reminders" desc="Daily reminder of what is due" value={s.taskReminders} onChange={() => {}} />
         </Card>
 
         <Card icon={Lock} title="Security">

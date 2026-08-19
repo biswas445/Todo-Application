@@ -8,16 +8,16 @@ import { useEffect, useRef, useCallback } from 'react';
 interface NotificationData {
   type: string;
   message: string;
-  object?: any;
+  object?: unknown;
 }
 
 interface UseWebSocketNotificationsProps {
   onNotification?: (data: NotificationData) => void;
-  onTaskCreated?: (data: any) => void;
-  onTaskUpdated?: (data: any) => void;
-  onTaskDeleted?: (data: any) => void;
-  onNoteCreated?: (data: any) => void;
-  onEventCreated?: (data: any) => void;
+  onTaskCreated?: (data: unknown) => void;
+  onTaskUpdated?: (data: unknown) => void;
+  onTaskDeleted?: (data: unknown) => void;
+  onNoteCreated?: (data: unknown) => void;
+  onEventCreated?: (data: unknown) => void;
   enabled?: boolean;
 }
 
