@@ -11,9 +11,11 @@ function getAuthToken(): string | null {
 }
 
 // Helper to make authenticated API calls
+// Helper to make authenticated API calls with retry logic
 async function apiRequest<T>(
-  endpoint: string, 
-  options: RequestInit = {}
+  endpoint: string,
+  options: RequestInit = {},
+  maxRetries = 3
 ): Promise<T> {
   const token = getAuthToken();
   const headers: HeadersInit = {
@@ -22,27 +24,71 @@ async function apiRequest<T>(
     ...options.headers,
   };
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
+        headers,
+      });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new ApiError(
-      errorData.error || errorData.detail || 'Request failed',
-      response.status
-    );
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        
+        // Don't retry client errors (4xx) - these are authentication/validation issues
+        if (response.status >= 400 && response.status < 500) {
+          throw new ApiError(
+            errorData.error || errorData.detail || 'Request failed',
+            response.status
+          );
+        }
+        
+        // For server errors (5xx), retry with exponential backoff
+        if (attempt === maxRetries) {
+          throw new ApiError(
+            errorData.error || errorData.detail || 'Server error after retries',
+            response.status
+          );
+        }
+        
+        lastError = new ApiError(
+          errorData.error || errorData.detail || 'Server error, retrying...',
+          response.status
+        );
+        
+        // Exponential backoff: 1s, 2s, 4s
+        const delay = Math.pow(2, attempt) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+
+      // Handle 204 No Content
+      if (response.status === 204) {
+        return undefined as T;
+      }
+
+      return response.json();
+    } catch (error) {
+      // If it's already an ApiError, rethrow it
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      
+      // Network errors - retry
+      lastError = error as Error;
+      if (attempt === maxRetries) {
+        throw lastError;
+      }
+      
+      // Exponential backoff for network errors
+      const delay = Math.pow(2, attempt) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
-
-  // Handle 204 No Content
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return response.json();
+  
+  throw lastError || new Error('Request failed');
 }
-
 export class ApiError extends Error {
   constructor(
     message: string,

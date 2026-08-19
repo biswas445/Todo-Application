@@ -10,6 +10,7 @@ import SettingsView from '@/components/SettingsView';
 import ListsManagementView from '@/components/ListsManagementView';
 import TagsManagementView from '@/components/TagsManagementView';
 import NotificationsView from '@/components/NotificationsView';
+import NotFound from '@/components/NotFound';
 import type { EntityId, ListItem } from '@/types';
 import { todayStr, tomorrowStr, dayOffsetStr } from '@/utils/format';
 
@@ -216,7 +217,7 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
 function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppStore>; listId: EntityId; onOpen: (id: EntityId) => void }) {
   const { data } = store;
   const list = data.lists.find((l) => l.id === listId);
-  if (!list) return null;
+  if (!list) return <NotFound />;
   const tasks = data.tasks.filter((t) => t.listId === listId);
   const incomplete = tasks.filter((t) => !t.completed);
   
@@ -281,7 +282,7 @@ function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppSt
 function TagView({ store, tagId, onOpen }: { store: ReturnType<typeof useAppStore>; tagId: EntityId; onOpen: (id: EntityId) => void }) {
   const { data } = store;
   const tag = data.tags.find((t) => t.id === tagId);
-  if (!tag) return null;
+  if (!tag) return <NotFound />;
   const tasks = data.tasks.filter((t) => t.tagIds.includes(tagId));
   const incomplete = tasks.filter((t) => !t.completed);
   
@@ -398,7 +399,7 @@ function Workspace({ store }: { store: ReturnType<typeof useAppStore> }) {
     if (page === 'Tags Management') return <TagsManagementView store={store} onPage={setPage} />;
     if (page.startsWith('list-')) { const id = page.slice(5); return <ListView store={store} listId={id} onOpen={openTask} />; }
     if (page.startsWith('tag-')) { const id = page.slice(4); return <TagView store={store} tagId={id} onOpen={openTask} />; }
-    return null;
+    return <NotFound />;
   };
 
   return (
