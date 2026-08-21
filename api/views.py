@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import get_user_model, authenticate
 from django.db import IntegrityError, connection, transaction
+from django.db.models import Count, Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
@@ -262,9 +263,13 @@ class AuthViewSet(viewsets.ViewSet):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         if not user.is_active:
+            # Return the same status and message as a bad-credential failure
+            # so this endpoint cannot be used to enumerate which emails hold
+            # an unverified account. The user can request a fresh link via
+            # the resend-verification endpoint.
             return Response(
-                {'error': 'Please verify your email address before signing in.'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': 'Invalid email or password.'},
+                status=status.HTTP_401_UNAUTHORIZED
             )
         # Authenticate using the username field
         authenticated_user = authenticate(
@@ -385,9 +390,17 @@ class ListViewSet(viewsets.ModelViewSet):
     """CRUD for task lists."""
     serializer_class = ListSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwner]
-    
+
     def get_queryset(self):
-        return List.objects.filter(user=self.request.user)
+        # Annotate task_count so the serializer reads it in one query instead
+        # of issuing a COUNT per list (N+1) on /api/lists/.
+        return List.objects.filter(user=self.request.user).annotate(
+            task_count=Count(
+                'tasks',
+                filter=Q(tasks__user=self.request.user),
+                distinct=True,
+            )
+        )
     
     def perform_create(self, serializer):
         instance = serializer.save(user=self.request.user)
@@ -424,9 +437,17 @@ class TagViewSet(viewsets.ModelViewSet):
     """CRUD for tags."""
     serializer_class = TagSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwner]
-    
+
     def get_queryset(self):
-        return Tag.objects.filter(user=self.request.user)
+        # Annotate task_count so the serializer reads it in one query instead
+        # of issuing a COUNT per tag (N+1) on /api/tags/.
+        return Tag.objects.filter(user=self.request.user).annotate(
+            task_count=Count(
+                'tasks',
+                filter=Q(tasks__user=self.request.user),
+                distinct=True,
+            )
+        )
     
     def perform_create(self, serializer):
         instance = serializer.save(user=self.request.user)
@@ -476,7 +497,6 @@ class TaskViewSet(viewsets.ModelViewSet):
         # Search filter (case-insensitive title or description)
         search = self.request.query_params.get('search', None)
         if search:
-            from django.db.models import Q
             queryset = queryset.filter(
                 Q(title__icontains=search) | Q(description__icontains=search)
             )
@@ -578,10 +598,18 @@ class TaskViewSet(viewsets.ModelViewSet):
         # Re-read under a row lock so two concurrent toggles serialize instead
         # of one overwriting the other (read-modify-write race). Plain
         # select_for_update() is a no-op on SQLite and a real lock elsewhere.
-        with transaction.atomic():
-            task = Task.objects.select_for_update().get(pk=task.pk)
-            task.completed = not task.completed
-            task.save()
+        try:
+            with transaction.atomic():
+                task = Task.objects.select_for_update().get(pk=task.pk)
+                task.completed = not task.completed
+                task.save()
+        except Task.DoesNotExist:
+            # Deleted between get_object() and the locked re-read (TOCTOU);
+            # surface a 404 instead of letting DoesNotExist bubble up as a 500.
+            return Response(
+                {'error': 'Task not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         # Send real-time notification
         async_to_sync(channel_layer.group_send)(
             f"user_{request.user.id}_notifications",
@@ -616,8 +644,22 @@ class TaskViewSet(viewsets.ModelViewSet):
                 {'error': 'Subtask not found.'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        subtask.completed = not subtask.completed
-        subtask.save()
+        # Re-read under a row lock so concurrent toggles serialize instead of
+        # one overwriting the other (read-modify-write race), re-checking
+        # ownership under the lock. Catch the deleted-between-reads case so it
+        # surfaces as a 404 rather than a DoesNotExist 500.
+        try:
+            with transaction.atomic():
+                subtask = Subtask.objects.select_for_update().get(
+                    pk=subtask.pk, task__user=request.user
+                )
+                subtask.completed = not subtask.completed
+                subtask.save()
+        except Subtask.DoesNotExist:
+            return Response(
+                {'error': 'Subtask not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         return Response(SubtaskSerializer(subtask).data)
 
     @action(detail=True, methods=['delete'], url_path='subtasks/(?P<subtask_pk>[^/.]+)')
@@ -640,9 +682,16 @@ class TaskViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         title = clean_subtask_title(request.data.get('title', ''))
-        if title:
-            subtask.title = title
-            subtask.save()
+        if title is None:
+            # Reject invalid/empty titles with a 400 instead of silently
+            # returning 200 with the subtask unchanged (a no-op that hides
+            # the bad input from the caller).
+            return Response(
+                {'error': 'Subtask title is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        subtask.title = title
+        subtask.save()
         return Response(SubtaskSerializer(subtask).data)
 
 

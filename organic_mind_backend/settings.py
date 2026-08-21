@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 import os
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
 from django.core.exceptions import ImproperlyConfigured
 
@@ -53,20 +54,28 @@ else:
     )
 
 # CORS settings for React frontend. Narrow this to the deployed frontend
-# origin(s) in production via DJANGO_CORS_ORIGINS.
+# origin(s) in production via DJANGO_CORS_ORIGINS. The WebSocket origin check
+# (see asgi.py) reuses this list, so it must cover every origin the SPA is
+# served from.
 CORS_ALLOW_ALL_ORIGINS = False
 _cors_origins_env = os.environ.get('DJANGO_CORS_ORIGINS')
 if _cors_origins_env:
     CORS_ALLOWED_ORIGINS = [
         origin.strip() for origin in _cors_origins_env.split(',') if origin.strip()
     ]
-else:
+elif DEBUG:
+    # Dev-only fallback for the local Vite/React dev servers; never used
+    # when DJANGO_DEBUG is False.
     CORS_ALLOWED_ORIGINS = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+else:
+    raise ImproperlyConfigured(
+        'DJANGO_CORS_ORIGINS must be set when DJANGO_DEBUG is False.'
+    )
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -132,13 +141,67 @@ WSGI_APPLICATION = 'organic_mind_backend.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
+#
+# The database is driven by DJANGO_DATABASE_URL so production can point at a
+# server database (e.g. postgres://user:pass@host:5432/organic_mind). SQLite
+# is only the dev default: it serializes writers at the file level and turns
+# select_for_update() into a no-op, so it must not serve production traffic.
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+
+def database_config_from_url(url):
+    """Translate a database URL into a Django DATABASES entry.
+
+    Supports postgres(ql)://, mysql:// and sqlite:/// URLs. Query-string
+    parameters (e.g. ?sslmode=require) are passed through as OPTIONS.
+    """
+    parsed = urlparse(url)
+    engines = {
+        'postgres': 'django.db.backends.postgresql',
+        'postgresql': 'django.db.backends.postgresql',
+        'mysql': 'django.db.backends.mysql',
+        'sqlite': 'django.db.backends.sqlite3',
     }
-}
+    engine = engines.get(parsed.scheme.lower())
+    if engine is None:
+        raise ImproperlyConfigured(
+            f'Unsupported DJANGO_DATABASE_URL scheme {parsed.scheme!r}; '
+            'use postgres, postgresql, mysql or sqlite.'
+        )
+    if parsed.scheme.lower() == 'sqlite':
+        # sqlite:///relative/path, sqlite:////absolute/path or sqlite://:memory:
+        name = parsed.netloc + parsed.path
+        if name.startswith('/'):
+            name = name[1:]
+        return {'ENGINE': engine, 'NAME': name}
+    options = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+    config = {
+        'ENGINE': engine,
+        'NAME': parsed.path.lstrip('/'),
+        'USER': unquote(parsed.username or ''),
+        'PASSWORD': unquote(parsed.password or ''),
+        'HOST': parsed.hostname or '',
+        'PORT': str(parsed.port or ''),
+    }
+    if options:
+        config['OPTIONS'] = options
+    return config
+
+
+_database_url = os.environ.get('DJANGO_DATABASE_URL')
+if _database_url:
+    DATABASES = {'default': database_config_from_url(_database_url)}
+elif DEBUG:
+    # Dev-only fallback; never used when DJANGO_DEBUG is False.
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+else:
+    raise ImproperlyConfigured(
+        'DJANGO_DATABASE_URL must be set when DJANGO_DEBUG is False.'
+    )
 
 
 # Password validation
@@ -184,12 +247,20 @@ STATIC_URL = 'static/'
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/
-# Console backend for development (verification emails are printed to the
-# server log). Point DJANGO_EMAIL_BACKEND at an SMTP backend in production.
-EMAIL_BACKEND = os.environ.get(
-    'DJANGO_EMAIL_BACKEND',
-    'django.core.mail.backends.console.EmailBackend',
-)
+# The backend must be chosen explicitly in production: the console backend
+# prints verification emails (including the signed activation link) to the
+# server log, so it is only acceptable as a dev convenience.
+EMAIL_BACKEND = os.environ.get('DJANGO_EMAIL_BACKEND')
+if not EMAIL_BACKEND:
+    if DEBUG:
+        # Dev-only fallback: verification emails are printed to the server
+        # log. Point DJANGO_EMAIL_BACKEND at an SMTP backend in production.
+        EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+    else:
+        raise ImproperlyConfigured(
+            'DJANGO_EMAIL_BACKEND must be set when DJANGO_DEBUG is False; '
+            'the console backend would leak signed verification links to logs.'
+        )
 DEFAULT_FROM_EMAIL = os.environ.get(
     'DJANGO_DEFAULT_FROM_EMAIL',
     'Organic Mind <noreply@organicmind.local>',

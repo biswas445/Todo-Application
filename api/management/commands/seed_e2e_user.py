@@ -12,8 +12,9 @@ together via the E2E_EMAIL / E2E_PASSWORD environment variables.
 """
 import os
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 User = get_user_model()
 
@@ -35,8 +36,24 @@ class Command(BaseCommand):
             default=os.environ.get('E2E_PASSWORD', DEFAULT_PASSWORD),
             help='Password for the e2e user.',
         )
+        parser.add_argument(
+            '--force',
+            action='store_true',
+            help='Run even when DEBUG is off (production).',
+        )
 
     def handle(self, *args, **options):
+        # Production guard: this command deletes any matching user (CASCADE
+        # wipes their data) and creates an account with known credentials, so
+        # it must never run against a production database by accident.
+        if not settings.DEBUG and not options['force']:
+            raise CommandError(
+                'Refusing to seed the e2e user while DEBUG is off. This '
+                'command deletes the matching user (cascading to all of '
+                'their data) and creates an account with known credentials. '
+                'Pass --force to override in a deliberate non-production run.'
+            )
+
         email = options['email']
         password = options['password']
 

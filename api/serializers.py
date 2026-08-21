@@ -41,11 +41,12 @@ class UserSerializer(serializers.ModelSerializer):
     def validate_timezone(self, value):
         """Validate timezone against the IANA timezone database.
 
-        Uses pytz's bundled timezone data so validation is consistent across
-        platforms regardless of the system tzdata.
+        Uses the standard library's ``zoneinfo`` (already relied on by the
+        views for timezone math) so validation stays consistent across
+        platforms without a third-party dependency.
         """
-        import pytz
-        if value not in pytz.all_timezones_set:
+        import zoneinfo
+        if value not in zoneinfo.available_timezones():
             raise serializers.ValidationError('Invalid timezone.')
         return value
 
@@ -148,6 +149,12 @@ class ListSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def get_task_count(self, obj):
+        # Prefer the annotation added by the viewset's get_queryset (a single
+        # query for the whole collection); fall back to a per-object count only
+        # for unannotated instances, e.g. a freshly created object.
+        annotated = getattr(obj, 'task_count', None)
+        if annotated is not None:
+            return annotated
         request = self.context.get('request')
         if request and hasattr(request, 'user'):
             return obj.tasks.filter(user=request.user).count()
@@ -168,6 +175,12 @@ class TagSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def get_task_count(self, obj):
+        # Prefer the annotation added by the viewset's get_queryset (a single
+        # query for the whole collection); fall back to a per-object count only
+        # for unannotated instances, e.g. a freshly created object.
+        annotated = getattr(obj, 'task_count', None)
+        if annotated is not None:
+            return annotated
         request = self.context.get('request')
         if request and hasattr(request, 'user'):
             return obj.tasks.filter(user=request.user).count()

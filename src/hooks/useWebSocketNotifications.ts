@@ -55,8 +55,12 @@ export const useWebSocketNotifications = ({
   // Bumped on every connect/disconnect so a slow ticket fetch cannot open a
   // socket after a newer connect or a disconnect has superseded it.
   const connectGeneration = useRef(0);
-  const MAX_RECONNECT_ATTEMPTS = 5;
-  const RECONNECT_DELAY = 3000; // 3 seconds
+  // Reconnection backs off exponentially and is capped at a maximum delay,
+  // but never permanently gives up: a socket lost to a server restart or a
+  // network blip must recover on its own. Attempts reset once a connection
+  // succeeds, so the delay shrinks back to the base after a recovery.
+  const BASE_RECONNECT_DELAY = 1000;
+  const MAX_RECONNECT_DELAY = 30000;
 
   // Keep the latest callbacks in a ref so connect() stays referentially
   // stable and the effect below does not tear down the socket on every render.
@@ -85,18 +89,20 @@ export const useWebSocketNotifications = ({
 
     // Retry a failed ticket exchange through the same backoff used for dropped
     // sockets. Defined here (not as a useCallback) so it can self-schedule
-    // `connect` without a dependency cycle.
-    const scheduleTicketRetry = () => {
+    // `connect` without a dependency cycle. The delay grows exponentially and
+    // is capped; there is no attempt limit, so the hook keeps retrying until
+    // the connection recovers.
+    const scheduleReconnect = () => {
       if (connectGeneration.current !== generation) return;
-      if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
-        console.error('[WebSocket] Max reconnection attempts reached');
-        return;
-      }
+      const delay = Math.min(
+        BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts.current),
+        MAX_RECONNECT_DELAY
+      );
       reconnectAttempts.current += 1;
-      console.log(`[WebSocket] Retrying ticket in ${RECONNECT_DELAY}ms (attempt ${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})`);
+      console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current})`);
       reconnectTimeoutRef.current = setTimeout(() => {
         connect();
-      }, RECONNECT_DELAY);
+      }, delay);
     };
 
     try {
@@ -116,7 +122,7 @@ export const useWebSocketNotifications = ({
         // Network blip reaching the ticket endpoint: retry via backoff rather
         // than silently giving up until the next remount.
         console.warn('[WebSocket] Ticket request failed:', networkError);
-        scheduleTicketRetry();
+        scheduleReconnect();
         return;
       }
 
@@ -129,7 +135,7 @@ export const useWebSocketNotifications = ({
           return;
         }
         console.warn('[WebSocket] Could not obtain a ticket:', ticketResponse.status);
-        scheduleTicketRetry();
+        scheduleReconnect();
         return;
       }
       const { ticket } = await ticketResponse.json();
@@ -219,16 +225,11 @@ export const useWebSocketNotifications = ({
         wsRef.current = null;
         setConnected(false);
 
-        // Attempt to reconnect if not intentionally closed
-        if (event.code !== 1000 && reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
-          reconnectAttempts.current += 1;
-          console.log(`[WebSocket] Reconnecting in ${RECONNECT_DELAY}ms (attempt ${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})`);
-
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connect();
-          }, RECONNECT_DELAY);
-        } else if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
-          console.error('[WebSocket] Max reconnection attempts reached');
+        // Reconnect unless this was an intentional client-initiated close.
+        // Backoff is unbounded (capped delay), so a dropped socket always
+        // recovers instead of giving up after a fixed number of attempts.
+        if (event.code !== 1000) {
+          scheduleReconnect();
         }
       };
 
@@ -240,12 +241,13 @@ export const useWebSocketNotifications = ({
   }, [enabled]);
 
   const disconnect = useCallback(() => {
+    // Bumping the generation invalidates any in-flight ticket fetch and any
+    // pending backoff timer, so nothing reopens the socket after this point.
     connectGeneration.current += 1;
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
-    reconnectAttempts.current = MAX_RECONNECT_ATTEMPTS;
     setConnected(false);
 
     if (wsRef.current) {
@@ -256,8 +258,8 @@ export const useWebSocketNotifications = ({
   }, []);
 
   const reconnect = useCallback(() => {
-    disconnect();
     reconnectAttempts.current = 0;
+    disconnect();
     connect();
   }, [connect, disconnect]);
 
@@ -271,6 +273,16 @@ export const useWebSocketNotifications = ({
       disconnect();
     };
   }, [enabled, connect, disconnect]);
+
+  // Recovery: when the browser regains connectivity, abandon any pending
+  // backoff delay and reconnect immediately instead of waiting it out.
+  useEffect(() => {
+    const handleOnline = () => {
+      reconnect();
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [reconnect]);
 
   return {
     connected,

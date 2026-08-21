@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle, Eye, EyeOff, Sparkles } from 'lucide-react';
 import type { Store } from '@/store/useAppStore';
 
@@ -39,6 +39,13 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
   const [signupShow, setSignupShow] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
 
+  // The post-signup redirect timer is held in a ref and cleared on unmount so
+  // it cannot fire (and call onView) after this component has been torn down.
+  const redirectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (redirectTimeoutRef.current) clearTimeout(redirectTimeoutRef.current);
+  }, []);
+
   const handleSignIn = async (event: React.FormEvent) => {
     event.preventDefault();
     setSigninError('');
@@ -62,7 +69,7 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
     setSignupEmail(''); 
     setSignupPassword('');
     // Wait a moment to show success message, then redirect to signin
-    setTimeout(() => onView('signin'), 1500);
+    redirectTimeoutRef.current = setTimeout(() => onView('signin'), 1500);
   };
 
   const switchView = (target: AuthView) => {

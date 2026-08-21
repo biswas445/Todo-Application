@@ -315,3 +315,13 @@ button { cursor: pointer; }
 .error-toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 10px; max-width: min(92vw, 480px); padding: 10px 14px; border-radius: 8px; background: #fdf6f5; border: 1px solid #f0d0cc; color: #c0392b; font-size: 13px; box-shadow: 0 10px 24px rgba(16, 38, 64, .12); }
 .error-toast-message { flex: 1; line-height: 1.4; word-break: break-word; }
 .error-toast-close { border: 0; background: transparent; color: #c0392b; display: grid; place-items: center; padding: 2px; border-radius: 4px; cursor: pointer; flex: 0 0 auto; }.error-toast-close:hover { background: #fbeae7; }
+
+/* ---- WebSocket connection indicator ---- */
+.ws-status { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-bottom: 6px; border-radius: 6px; font-size: 12px; color: #666; }
+.ws-status-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.ws-connected .ws-status-dot { background: #34c759; }
+.ws-disconnected { color: #b26a00; }
+.ws-disconnected .ws-status-dot { background: #ff9500; }
+.ws-status-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-reconnect-btn { border: 0; background: #ececec; color: #102640; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 4px; cursor: pointer; flex: 0 0 auto; }
+.ws-reconnect-btn:hover { background: #e0e0e0; }

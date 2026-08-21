@@ -3,7 +3,7 @@ import { CalendarDays, Check, ChevronRight, Pencil, Plus, Trash2, X } from 'luci
 import type { Task, ListItem, TagItem, Store, EntityId } from '@/store/useAppStore';
 import type { Priority, Subtask } from '@/types';
 import { LIMITS } from '@/types';
-import { formatDate } from '@/utils/format';
+import { formatDate, localISO } from '@/utils/format';
 
 function CharCounter({ current, max }: { current: number; max: number }) {
   const near = current > max * 0.85;
@@ -35,12 +35,14 @@ export function TaskRow({ task, lists, store, onOpen, hideCheckbox }: { task: Ta
 
 export function AddTask({ store, defaultListId, defaultDueDate }: { store: Store; defaultListId?: EntityId | null; defaultDueDate?: string }) {
   const [value, setValue] = useState('');
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = value.trim().slice(0, LIMITS.TASK_TITLE);
     if (!trimmed) return;
-    store.addTask({ title: trimmed, description: '', completed: false, priority: 'Normal', dueDate: defaultDueDate ?? null, listId: defaultListId ?? null, tagIds: [], subtasks: [] });
-    setValue('');
+    const created = await store.addTask({ title: trimmed, description: '', completed: false, priority: 'Normal', dueDate: defaultDueDate ?? null, listId: defaultListId ?? null, tagIds: [], subtasks: [] });
+    // Only clear the input once the task is actually saved; clearing it
+    // first would lose the typed title if the save fails.
+    if (created) setValue('');
   };
   return <form className="add-task" onSubmit={submit}><Plus size={18} /><input value={value} onChange={(e) => setValue(e.target.value.slice(0, LIMITS.TASK_TITLE))} placeholder="Add New Task" maxLength={LIMITS.TASK_TITLE} /></form>;
 }
@@ -48,7 +50,7 @@ export function AddTask({ store, defaultListId, defaultDueDate }: { store: Store
 function SubtaskRow({ sub, taskId, store }: { sub: Subtask; taskId: EntityId; store: Store }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(sub.title);
-  const saveEdit = () => { const trimmed = editValue.trim().slice(0, LIMITS.SUBTASK_TITLE); if (trimmed) { store.editSubtask(taskId, sub.id, trimmed); setEditing(false); } };
+  const saveEdit = async () => { const trimmed = editValue.trim().slice(0, LIMITS.SUBTASK_TITLE); if (trimmed) { const ok = await store.editSubtask(taskId, sub.id, trimmed); if (ok) setEditing(false); } };
   if (editing) {
     return (
       <div className="subtask-item">
@@ -117,15 +119,17 @@ export function TaskModal({ selectedTaskId, lists, tags, store, onClose }: { sel
     JSON.stringify(selectedTags) !== JSON.stringify(task.tagIds)
   );
 
-  const save = () => {
+  const save = async () => {
     const trimmed = title.trim().slice(0, LIMITS.TASK_TITLE);
     if (!trimmed) return;
-    store.updateTask(task.id, { title: trimmed, description: description.slice(0, LIMITS.TASK_DESCRIPTION), dueDate: dueDate || null, priority, listId, tagIds: selectedTags });
-    onClose();
+    const ok = await store.updateTask(task.id, { title: trimmed, description: description.slice(0, LIMITS.TASK_DESCRIPTION), dueDate: dueDate || null, priority, listId, tagIds: selectedTags });
+    // Only close once the save succeeds; closing first would discard the
+    // edits just typed if the request fails.
+    if (ok) onClose();
   };
 
   const toggleTag = (tagId: EntityId) => setSelectedTags((prev) => prev.includes(tagId) ? prev.filter((t) => t !== tagId) : [...prev, tagId]);
-  const addSub = (e: React.FormEvent) => { e.preventDefault(); const trimmed = newSubtask.trim().slice(0, LIMITS.SUBTASK_TITLE); if (trimmed) { store.addSubtask(task.id, trimmed); setNewSubtask(''); } };
+  const addSub = async (e: React.FormEvent) => { e.preventDefault(); const trimmed = newSubtask.trim().slice(0, LIMITS.SUBTASK_TITLE); if (trimmed) { const ok = await store.addSubtask(task.id, trimmed); if (ok) setNewSubtask(''); } };
 
   const handleClose = () => { if (hasUnsavedChanges) setShowDiscard(true); else onClose(); };
 
@@ -179,8 +183,8 @@ export function TaskModal({ selectedTaskId, lists, tags, store, onClose }: { sel
               ) : <span className="detail-muted">No subtasks</span>}
             </div>
             <div className="detail-meta-row">
-              <span>Created {formatDate(task.createdAt.split('T')[0], dateFormat)}</span>
-              <span>Updated {formatDate(task.updatedAt.split('T')[0], dateFormat)}</span>
+              <span>Created {formatDate(localISO(new Date(task.createdAt)), dateFormat)}</span>
+              <span>Updated {formatDate(localISO(new Date(task.updatedAt)), dateFormat)}</span>
             </div>
             <div className="modal-actions detail-actions">
               <button className="danger-btn-text" onClick={() => setConfirmDelete(true)} aria-label="Delete task"><Trash2 size={15} />Delete</button>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { Store } from '@/store/useAppStore';
-import { formatDate, formatTime } from '@/utils/format';
+import { formatDate, formatTime, localISO } from '@/utils/format';
 
 export function NotificationsView({ store }: { store: Store }) {
   const { data, clearNotifications, markAllNotificationsRead } = store;
@@ -47,7 +47,10 @@ export function NotificationsView({ store }: { store: Store }) {
         <div className="notifications-list">
           {data.notifications.slice().reverse().map((notification) => {
             const date = new Date(notification.timestamp);
-            const dateStr = formatDate(notification.timestamp.split('T')[0], dateFormat);
+            // Derive the displayed date from the local Date, not from the raw
+            // ISO string: splitting on 'T' yields the UTC date, which can be a
+            // day off from the local date near midnight.
+            const dateStr = formatDate(localISO(date), dateFormat);
             const timeStr = formatTime(date.toTimeString().slice(0, 5), timeFormat);
             
             return (

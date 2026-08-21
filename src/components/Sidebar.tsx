@@ -7,9 +7,10 @@ type Props = {
   page: string; onPage: (p: string) => void; store: Store;
   searchQuery: string; onSearch: (q: string) => void; onClearSearch: () => void;
   searchInputRef?: RefObject<HTMLInputElement>;
+  wsConnected?: boolean; onWsReconnect?: () => void;
 };
 
-export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSearch, searchInputRef }: Props) {
+export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSearch, searchInputRef, wsConnected = false, onWsReconnect }: Props) {
   const { data } = store;
 
   const todayCount = data.tasks.filter((t) => t.dueDate === todayStr() && !t.completed).length;
@@ -72,6 +73,13 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
         </div>
 
         <div className="sidebar-bottom">
+          <div className={`ws-status ${wsConnected ? 'ws-connected' : 'ws-disconnected'}`} role="status" aria-live="polite" title={wsConnected ? 'Real-time sync is active' : 'Real-time sync is offline'}>
+            <span className="ws-status-dot" aria-hidden="true" />
+            <span className="ws-status-label">{wsConnected ? 'Live sync' : 'Sync offline'}</span>
+            {!wsConnected && onWsReconnect && (
+              <button type="button" className="ws-reconnect-btn" onClick={onWsReconnect}>Retry</button>
+            )}
+          </div>
           <button className={`side-link ${page === 'Settings' ? 'active' : ''}`} onClick={() => nav('Settings')}><SlidersHorizontal size={16} />Settings</button>
           <button className="side-link" onClick={store.signOut}><ArrowLeft size={16} />Sign out</button>
         </div>

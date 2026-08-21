@@ -369,7 +369,8 @@ function Workspace({ store }: { store: ReturnType<typeof useAppStore> }) {
   // Real-time sync: apply changes broadcast by the backend over WebSocket.
   // Object payloads are upserted directly; list/tag mutations and note/event
   // updates/deletes (which carry no payload) trigger a collection refresh.
-  useWebSocketNotifications({
+  // `connected`/`reconnect` drive the sidebar's live-sync indicator.
+  const { connected: wsConnected, reconnect: wsReconnect } = useWebSocketNotifications({
     onTaskCreated: (task) => { if (task) store.applyExternalTask(task as ApiTask); },
     onTaskUpdated: (task) => { if (task) store.applyExternalTask(task as ApiTask); },
     onTaskDeleted: (data) => {
@@ -460,7 +461,7 @@ function Workspace({ store }: { store: ReturnType<typeof useAppStore> }) {
 
   return (
     <main className="workspace">
-      <Sidebar page={page} onPage={setPage} store={store} searchQuery={searchQuery} onSearch={setSearchQuery} onClearSearch={clearSearch} searchInputRef={searchInputRef} />
+      <Sidebar page={page} onPage={setPage} store={store} searchQuery={searchQuery} onSearch={setSearchQuery} onClearSearch={clearSearch} searchInputRef={searchInputRef} wsConnected={wsConnected} onWsReconnect={wsReconnect} />
       <section className="workspace-main">
         {renderPage()}
       </section>

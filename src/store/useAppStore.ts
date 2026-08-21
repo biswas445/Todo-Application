@@ -127,8 +127,9 @@ export function useAppStore() {
   // whole auth/workspace UI while it is true, so auth mutations (sign in/up,
   // password change, account deletion) must use `authPending` instead —
   // otherwise their error/success setState calls would hit an unmounted
-  // component and never render.
-  const [loading, setLoading] = useState(false);
+  // component and never render. It starts true when a token is already stored
+  // so the auth screen does not flash briefly before the session is restored.
+  const [loading, setLoading] = useState(() => Boolean(getAuthToken()));
   const [authPending, setAuthPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const initialized = useRef(false);
@@ -142,6 +143,13 @@ export function useAppStore() {
 
   // Initialize: check for existing session and load data
   useEffect(() => {
+    // StrictMode double-invokes effects in development; the ref is set
+    // synchronously here (not after the async restore completes) so the
+    // session restore — and its burst of network requests — runs only once
+    // per mount instead of twice.
+    if (initialized.current) return;
+    initialized.current = true;
+
     async function init() {
       const token = getAuthToken();
       if (!token) {
@@ -213,7 +221,6 @@ export function useAppStore() {
         }
       } finally {
         setLoading(false);
-        initialized.current = true;
       }
     }
 
@@ -277,22 +284,37 @@ export function useAppStore() {
       const response = await authApi.login({ email: email.trim(), password });
       saveAuthToken(response.token);
 
-      const [listsResponse, tagsResponse, tasksResponse, notesResponse, eventsResponse, notificationsResponse] = await Promise.all([
-        listsApi.getAll(),
-        tagsApi.getAll(),
-        tasksApi.getAll(),
-        notesApi.getAll(),
-        eventsApi.getAll(),
-        notificationsApi.getAll().catch(() => []),
-      ]);
+      // Load the freshly authenticated session's collections. A failure here
+      // must not strand the valid token behind a signed-out auth screen: the
+      // session is established regardless (with whatever loaded), and the load
+      // failure is surfaced as a retryable error toast instead.
+      let lists: ApiList[] = [];
+      let tags: ApiTag[] = [];
+      let tasks: ApiTask[] = [];
+      let notes: ApiNote[] = [];
+      let events: ApiEvent[] = [];
+      let notifications: ApiNotification[] = [];
+      let loadError: unknown = null;
+      try {
+        const [listsResponse, tagsResponse, tasksResponse, notesResponse, eventsResponse, notificationsResponse] = await Promise.all([
+          listsApi.getAll(),
+          tagsApi.getAll(),
+          tasksApi.getAll(),
+          notesApi.getAll(),
+          eventsApi.getAll(),
+          notificationsApi.getAll().catch(() => []),
+        ]);
 
-      // Normalize all collections to arrays
-      const lists = normalizeCollection<ApiList>(listsResponse);
-      const tags = normalizeCollection<ApiTag>(tagsResponse);
-      const tasks = normalizeCollection<ApiTask>(tasksResponse);
-      const notes = normalizeCollection<ApiNote>(notesResponse);
-      const events = normalizeCollection<ApiEvent>(eventsResponse);
-      const notifications = normalizeCollection<ApiNotification>(notificationsResponse);
+        // Normalize all collections to arrays
+        lists = normalizeCollection<ApiList>(listsResponse);
+        tags = normalizeCollection<ApiTag>(tagsResponse);
+        tasks = normalizeCollection<ApiTask>(tasksResponse);
+        notes = normalizeCollection<ApiNote>(notesResponse);
+        events = normalizeCollection<ApiEvent>(eventsResponse);
+        notifications = normalizeCollection<ApiNotification>(notificationsResponse);
+      } catch (err) {
+        loadError = err;
+      }
 
       // Build settings from the login response user; no extra /user/me/ call.
       const settings = mapUserToSettings(response.user);
@@ -309,9 +331,15 @@ export function useAppStore() {
         settings,
         session: true,
       });
-      // A successful sign-in supersedes any stale init error (e.g. the
-      // expired-session message from a failed restore attempt).
-      setError(null);
+      if (loadError) {
+        // Signed in, but the initial data load failed: surface it so the user
+        // knows to retry rather than assuming the workspace is empty.
+        setError(loadError instanceof Error ? loadError.message : 'Failed to load data');
+      } else {
+        // A successful sign-in supersedes any stale init error (e.g. the
+        // expired-session message from a failed restore attempt).
+        setError(null);
+      }
       return { ok: true };
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Login failed';
@@ -387,7 +415,7 @@ export function useAppStore() {
     }
   }, []);
 
-  const updateTask = useCallback(async (id: EntityId, updates: Partial<Task>) => {
+  const updateTask = useCallback(async (id: EntityId, updates: Partial<Task>): Promise<boolean> => {
     try {
       const apiUpdates: Record<string, unknown> = {};
       if (updates.title !== undefined) apiUpdates.title = updates.title;
@@ -402,9 +430,11 @@ export function useAppStore() {
       const apiTask = await tasksApi.update(id, apiUpdates);
       const updatedTask = mapApiTaskToFrontend(apiTask);
       setData((d) => ({ ...d, tasks: d.tasks.map((t) => t.id === id ? updatedTask : t) }));
+      return true;
     } catch (err) {
       console.error('Failed to update task:', err);
       setError(err instanceof Error ? err.message : 'Failed to update task');
+      return false;
     }
   }, []);
 
@@ -578,7 +608,7 @@ export function useAppStore() {
     return () => clearInterval(interval);
   }, [data.session, data.tasks, data.events, data.settings.timeFormat, data.settings.pushNotifications, data.settings.taskReminders, addNotification]);
 
-  const addSubtask = useCallback(async (taskId: EntityId, title: string) => {
+  const addSubtask = useCallback(async (taskId: EntityId, title: string): Promise<boolean> => {
     try {
       const apiSubtask = await tasksApi.addSubtask(taskId, title);
       setData((d) => ({
@@ -593,9 +623,11 @@ export function useAppStore() {
             : t
         ),
       }));
+      return true;
     } catch (err) {
       console.error('Failed to add subtask:', err);
       setError(err instanceof Error ? err.message : 'Failed to add subtask');
+      return false;
     }
   }, []);
 
@@ -622,7 +654,7 @@ export function useAppStore() {
     }
   }, []);
 
-  const editSubtask = useCallback(async (taskId: EntityId, subId: EntityId, title: string) => {
+  const editSubtask = useCallback(async (taskId: EntityId, subId: EntityId, title: string): Promise<boolean> => {
     try {
       const apiSubtask = await tasksApi.updateSubtask(subId, title);
       setData((d) => ({
@@ -639,9 +671,11 @@ export function useAppStore() {
             : t
         ),
       }));
+      return true;
     } catch (err) {
       console.error('Failed to edit subtask:', err);
       setError(err instanceof Error ? err.message : 'Failed to edit subtask');
+      return false;
     }
   }, []);
 
@@ -777,14 +811,16 @@ export function useAppStore() {
     }
   }, []);
 
-  const updateNote = useCallback(async (id: EntityId, updates: Partial<Note>) => {
+  const updateNote = useCallback(async (id: EntityId, updates: Partial<Note>): Promise<boolean> => {
     try {
       const apiNote = await notesApi.update(id, updates);
       const updatedNote = mapApiNoteToFrontend(apiNote);
       setData((d) => ({ ...d, notes: d.notes.map((n) => n.id === id ? updatedNote : n) }));
+      return true;
     } catch (err) {
       console.error('Failed to update note:', err);
       setError(err instanceof Error ? err.message : 'Failed to update note');
+      return false;
     }
   }, []);
 

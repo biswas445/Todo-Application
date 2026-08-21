@@ -21,6 +21,9 @@ from .serializers import NotificationSerializer
 @receiver(pre_save, sender=Task)
 def capture_previous_completed(sender, instance, **kwargs):
     """Stash the stored ``completed`` flag so post_save can detect a transition."""
+    # ``raw=True`` during loaddata/fixtures: skip the extra read entirely.
+    if kwargs.get('raw'):
+        return
     if instance.pk:
         previous = (
             Task.objects.filter(pk=instance.pk)
@@ -35,6 +38,10 @@ def capture_previous_completed(sender, instance, **kwargs):
 @receiver(post_save, sender=Task)
 def create_task_completed_notification(sender, instance, created, **kwargs):
     """Create a completion notification when a task flips to completed."""
+    # ``raw=True`` during loaddata/fixtures: rows are being deserialized, not
+    # user-driven, so they must not generate notifications or WS broadcasts.
+    if kwargs.get('raw'):
+        return
     if created:
         return
     if not instance.completed or getattr(instance, '_previous_completed', False):

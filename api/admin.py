@@ -3,23 +3,29 @@ Django admin configuration for Organic Mind.
 Provides useful list displays and search/filtering for all models.
 """
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from .models import User, List, Tag, Task, Subtask, Note, CalendarEvent, Notification
 
 
 @admin.register(User)
-class UserAdmin(admin.ModelAdmin):
+class UserAdmin(DjangoUserAdmin):
+    """Subclass the auth ``UserAdmin`` so passwords are never shown or edited raw.
+
+    The previous ``ModelAdmin`` rendered the password hash as a plain editable
+    field; typing a new value there stored it verbatim and corrupted the hash.
+    ``UserAdmin`` renders a read-only hash plus a proper password-reset form
+    that hashes whatever is entered.
+    """
     list_display = ['username', 'email', 'first_name', 'last_name', 'timezone', 'date_joined']
-    list_filter = ['timezone', 'date_format', 'start_of_week', 'time_format']
+    list_filter = ['timezone', 'date_format', 'start_of_week', 'time_format', 'is_active', 'is_staff', 'is_superuser']
     search_fields = ['username', 'email', 'first_name', 'last_name']
-    readonly_fields = ['email', 'last_login', 'date_joined']
-    
-    fieldsets = (
-        ('Account', {'fields': ('username', 'email', 'password')}),
-        ('Profile', {'fields': ('first_name', 'last_name', 'bio')}),
-        ('Settings', {'fields': ('timezone', 'date_format', 'start_of_week', 'time_format')}),
+
+    # Reuse the stock fieldsets (they render ``password`` through
+    # ReadOnlyPasswordHashField) and append this app's profile/settings fields.
+    fieldsets = DjangoUserAdmin.fieldsets + (
+        ('Profile', {'fields': ('bio',)}),
+        ('Preferences', {'fields': ('timezone', 'date_format', 'start_of_week', 'time_format')}),
         ('Notifications', {'fields': ('push_notifications', 'task_reminders')}),
-        ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
-        ('Important dates', {'fields': ('last_login', 'date_joined')}),
     )
 
 

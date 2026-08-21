@@ -62,14 +62,16 @@ export function StickyWallView({ store }: { store: Store }) {
     }
   };
 
-  const saveNote = () => {
+  const saveNote = async () => {
     if (selectedNote) {
-      store.updateNote(selectedNote.id, {
+      const ok = await store.updateNote(selectedNote.id, {
         title: editTitle.trim().slice(0, LIMITS.NOTE_TITLE) || 'Untitled',
         body: editBody.slice(0, LIMITS.NOTE_BODY),
         color: editColor,
       });
-      setIsEditing(false);
+      // Only leave edit mode once the save succeeds; leaving first would
+      // discard the typed title/body if the request fails.
+      if (ok) setIsEditing(false);
     }
   };
   const deleteNote = () => { if (selectedNote) { store.deleteNote(selectedNote.id); setSelectedNoteId(null); } };
@@ -104,7 +106,7 @@ export function StickyWallView({ store }: { store: Store }) {
             <button className={`note-card ${note.color}`} key={note.id} onClick={() => setSelectedNoteId(note.id)} aria-label={`Open note ${note.title}`}>
               <h2 className="note-card-title">{note.title}</h2>
               <p className="note-card-body">{note.body}</p>
-              <span className="note-date">{note.updatedAt.startsWith(localISO(new Date())) ? 'Today' : formatDate(note.updatedAt.split('T')[0], dateFormat)}</span>
+              <span className="note-date">{localISO(new Date(note.updatedAt)) === localISO(new Date()) ? 'Today' : formatDate(localISO(new Date(note.updatedAt)), dateFormat)}</span>
             </button>
           ))}
         </div>
@@ -118,7 +120,7 @@ export function StickyWallView({ store }: { store: Store }) {
                 <div className="note-swatch note-swatch-detail">{noteColors.find((c) => c.value === selectedNote.color)?.label}</div>
                 <h2 className="note-detail-title">{selectedNote.title}</h2>
                 <p className="note-detail-body">{selectedNote.body || 'No content.'}</p>
-                <span className="note-date note-detail-date">Updated {formatDate(selectedNote.updatedAt.split('T')[0], dateFormat)}</span>
+                <span className="note-date note-detail-date">Updated {formatDate(localISO(new Date(selectedNote.updatedAt)), dateFormat)}</span>
                 {confirmDelete ? (
                   <div className="confirm-row"><span>Delete this note?</span><button className="danger-btn" onClick={deleteNote}>Delete</button><button className="outline-button small-btn" onClick={() => setConfirmDelete(false)}>Cancel</button></div>
                 ) : (

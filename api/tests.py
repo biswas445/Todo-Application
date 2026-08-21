@@ -13,7 +13,10 @@ from channels.testing import WebsocketCommunicator
 from organic_mind_backend.asgi import application
 from .models import List, Tag, Task, Subtask, Note, CalendarEvent, Notification
 from unittest import mock
+import os
 import re
+import subprocess
+import sys
 import uuid
 
 User = get_user_model()
@@ -140,8 +143,10 @@ class AuthenticationTests(TestCase):
         self.client.post(self.register_url, self.user_data)
         login_data = {"email": "test@example.com", "password": "securePass-2026x"}
         response = self.client.post(self.login_url, login_data)
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertIn("verify", response.data["error"].lower())
+        # Uniform 401 + generic message so the endpoint cannot be used to
+        # enumerate which emails hold an unverified account.
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(response.data["error"], "Invalid email or password.")
 
     def test_login_valid_credentials(self):
         """Test login with valid credentials returns token."""
@@ -409,7 +414,21 @@ class ListTests(TestCase):
         response = self.client.get(self.lists_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["results"]), 2)
-        
+
+    def test_list_task_count(self):
+        """Test task_count is annotated per list (not an N+1) and correct."""
+        work = List.objects.create(user=self.user, label="Work", color="blue")
+        personal = List.objects.create(user=self.user, label="Personal", color="coral")
+        Task.objects.create(user=self.user, title="T1", list=work)
+        Task.objects.create(user=self.user, title="T2", list=work)
+        Task.objects.create(user=self.user, title="T3", list=personal)
+
+        response = self.client.get(self.lists_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        counts = {item["label"]: item["task_count"] for item in response.data["results"]}
+        self.assertEqual(counts["Work"], 2)
+        self.assertEqual(counts["Personal"], 1)
+
     def test_update_list(self):
         """Test updating a list."""
         list_obj = List.objects.create(user=self.user, label="Old Label", color="yellow")
@@ -766,7 +785,25 @@ class SubtaskTests(TestCase):
         response = self.client.patch(url, data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["title"], "New Title")
-        
+
+    def test_update_subtask_empty_title_fails(self):
+        """Test updating a subtask with an empty title returns 400, not a 200 no-op."""
+        subtask = Subtask.objects.create(task=self.task, title="Keep Me")
+        url = f"/api/tasks/subtasks/{subtask.id}/update/"
+        response = self.client.patch(url, {"title": ""})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        subtask.refresh_from_db()
+        self.assertEqual(subtask.title, "Keep Me")
+
+    def test_update_subtask_non_string_title_fails(self):
+        """Test updating a subtask with a non-string title returns 400, not a 500."""
+        subtask = Subtask.objects.create(task=self.task, title="Keep Me")
+        url = f"/api/tasks/subtasks/{subtask.id}/update/"
+        response = self.client.patch(url, {"title": 12345}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        subtask.refresh_from_db()
+        self.assertEqual(subtask.title, "Keep Me")
+
     def test_delete_subtask(self):
         """Test deleting a subtask."""
         subtask = Subtask.objects.create(task=self.task, title="To Delete")
@@ -1508,12 +1545,13 @@ class NotificationTests(TestCase):
 class WebSocketTests(TestCase):
     """Test the real-time notification WebSocket endpoint.
 
-    Every connection passes a valid Origin header so the tests exercise
-    ticket authentication instead of being rejected up front by
-    AllowedHostsOriginValidator (which closes connections with no Origin).
+    Every connection passes an Origin header taken from the dev CORS
+    allow-list so the tests exercise ticket authentication instead of being
+    rejected up front by the origin validator (which closes connections with
+    no or disallowed Origin).
     """
 
-    ORIGIN_HEADERS = [(b"origin", b"http://localhost")]
+    ORIGIN_HEADERS = [(b"origin", b"http://localhost:5173")]
 
     async def test_anonymous_connection_is_rejected(self):
         """Test connections without a ticket are closed."""
@@ -1583,6 +1621,71 @@ class WebSocketTests(TestCase):
         self.assertEqual(message["type"], "notification")
         self.assertEqual(message["data"]["message"], "List created")
 
+        await communicator.disconnect()
+
+    async def test_ticket_cannot_be_reused(self):
+        """Test a ticket authenticates only one connection (replay protection).
+
+        Within the ticket's lifetime a leaked ticket must not be replayable:
+        the nonce embedded in the ticket is consumed on first redemption.
+        """
+        from api.middleware import generate_ws_ticket
+
+        user = await database_sync_to_async(User.objects.create_user)(
+            username="replayuser", email="replay@example.com", password="securePass-2026x"
+        )
+        ticket = await database_sync_to_async(generate_ws_ticket)(user)
+
+        first = WebsocketCommunicator(
+            application, f"/ws/notifications/?ticket={ticket}",
+            headers=self.ORIGIN_HEADERS,
+        )
+        connected, _ = await first.connect()
+        self.assertTrue(connected)
+
+        second = WebsocketCommunicator(
+            application, f"/ws/notifications/?ticket={ticket}",
+            headers=self.ORIGIN_HEADERS,
+        )
+        connected, _ = await second.connect()
+        self.assertFalse(connected)
+
+        await first.disconnect()
+        await second.disconnect()
+
+    async def test_ticket_without_nonce_is_rejected(self):
+        """Test a ticket missing the single-use nonce cannot authenticate."""
+        from django.core import signing
+        from api.middleware import WS_TICKET_SALT
+
+        user = await database_sync_to_async(User.objects.create_user)(
+            username="nonceless", email="nonceless@example.com", password="securePass-2026x"
+        )
+        ticket = await database_sync_to_async(signing.dumps)(
+            {"user_id": str(user.pk)}, salt=WS_TICKET_SALT
+        )
+        communicator = WebsocketCommunicator(
+            application, f"/ws/notifications/?ticket={ticket}",
+            headers=self.ORIGIN_HEADERS,
+        )
+        connected, _ = await communicator.connect()
+        self.assertFalse(connected)
+        await communicator.disconnect()
+
+    async def test_disallowed_origin_is_rejected(self):
+        """Test connections from origins outside the CORS allow-list are closed."""
+        from api.middleware import generate_ws_ticket
+
+        user = await database_sync_to_async(User.objects.create_user)(
+            username="originuser", email="origin@example.com", password="securePass-2026x"
+        )
+        ticket = await database_sync_to_async(generate_ws_ticket)(user)
+        communicator = WebsocketCommunicator(
+            application, f"/ws/notifications/?ticket={ticket}",
+            headers=[(b"origin", b"http://evil.example.com")],
+        )
+        connected, _ = await communicator.connect()
+        self.assertFalse(connected)
         await communicator.disconnect()
 
 
@@ -1731,6 +1834,31 @@ class TaskCompletionSignalTests(TestCase):
             self.client.post(f"/api/tasks/{task.id}/toggle/")  # re-complete
             mock_layer.group_send.assert_not_awaited()
 
+    def test_raw_save_does_not_create_notification_or_broadcast(self):
+        """Test a raw save (what loaddata does) flipping completed stays silent.
+
+        Without the ``raw`` guard, deserializing a fixture over an existing
+        open task would generate a notification and a WebSocket broadcast even
+        though no user action happened.
+        """
+        task = Task.objects.create(user=self.user, title="Fixture Task", completed=False)
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
+
+        with mock.patch("api.signals.get_channel_layer") as mock_get:
+            mock_layer = mock.Mock()
+            mock_layer.group_send = mock.AsyncMock()
+            mock_get.return_value = mock_layer
+
+            # save_base(raw=True) is exactly how loaddata persists rows.
+            task.completed = True
+            task.save_base(raw=True)
+
+            mock_layer.group_send.assert_not_awaited()
+
+        task.refresh_from_db()
+        self.assertTrue(task.completed)
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
+
 
 class UserRouteRestrictionTests(TestCase):
     """Test UserViewSet exposes only its custom actions.
@@ -1868,8 +1996,188 @@ class TokenSecurityTests(TestCase):
 
         payload = signing.loads(ticket, salt=WS_TICKET_SALT, max_age=60)
         self.assertEqual(payload["user_id"], str(self.user.id))
+        # Single-use: every ticket carries a random nonce consumed on
+        # first redemption.
+        self.assertTrue(payload.get("nonce"))
 
         # The same ticket is rejected once it is older than the max age.
         with self.assertRaises(signing.BadSignature):
             signing.loads(ticket, salt=WS_TICKET_SALT, max_age=0)
+
+    def test_ws_tickets_carry_a_fresh_nonce_each_time(self):
+        """Test two tickets for the same user are never identical."""
+        token = Token.objects.create(user=self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        first = self.client.post("/api/auth/ws_ticket/")
+        second = self.client.post("/api/auth/ws_ticket/")
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertNotEqual(first.data["ticket"], second.data["ticket"])
+
+
+class SeedE2eUserCommandTests(TestCase):
+    """Test the seed_e2e_user management command's production guard.
+
+    The command deletes any matching user (CASCADE wiping their data) and
+    creates an account with known credentials, so it must refuse to run
+    against a production database (DEBUG off) unless explicitly forced.
+    """
+
+    def _run(self, **kwargs):
+        from django.core.management import call_command
+        from io import StringIO
+        out = StringIO()
+        call_command("seed_e2e_user", stdout=out, **kwargs)
+        return out
+
+    def test_refuses_when_debug_off_without_force(self):
+        from django.core.management import CommandError
+        with self.settings(DEBUG=False):
+            with self.assertRaises(CommandError):
+                self._run()
+        self.assertFalse(
+            User.objects.filter(email="e2e@organicmind.local").exists()
+        )
+
+    def test_force_overrides_debug_off(self):
+        with self.settings(DEBUG=False):
+            self._run(force=True)
+        user = User.objects.get(email="e2e@organicmind.local")
+        self.assertTrue(user.is_active)
+
+    def test_runs_when_debug_on(self):
+        with self.settings(DEBUG=True):
+            self._run()
+        self.assertTrue(
+            User.objects.filter(email="e2e@organicmind.local").exists()
+        )
+
+    def test_reset_deletes_previous_user_data(self):
+        """Test re-seeding clears the previous e2e user's data via CASCADE."""
+        with self.settings(DEBUG=True):
+            self._run()
+            user = User.objects.get(email="e2e@organicmind.local")
+            Task.objects.create(user=user, title="Leftover")
+            self.assertEqual(Task.objects.filter(user=user).count(), 1)
+
+            self._run()
+            new_user = User.objects.get(email="e2e@organicmind.local")
+            self.assertNotEqual(user.id, new_user.id)
+            self.assertEqual(Task.objects.filter(user=new_user).count(), 0)
+
+
+class DatabaseUrlParserTests(TestCase):
+    """Test the DJANGO_DATABASE_URL parsing helper in settings."""
+
+    def parse(self, url):
+        from organic_mind_backend.settings import database_config_from_url
+        return database_config_from_url(url)
+
+    def test_postgres_url_is_parsed(self):
+        config = self.parse(
+            "postgres://user:s%40cret@db.example.com:5432/organic_mind"
+            "?sslmode=require"
+        )
+        self.assertEqual(config["ENGINE"], "django.db.backends.postgresql")
+        self.assertEqual(config["NAME"], "organic_mind")
+        self.assertEqual(config["USER"], "user")
+        self.assertEqual(config["PASSWORD"], "s@cret")
+        self.assertEqual(config["HOST"], "db.example.com")
+        self.assertEqual(config["PORT"], "5432")
+        self.assertEqual(config["OPTIONS"], {"sslmode": "require"})
+
+    def test_postgresql_scheme_alias(self):
+        config = self.parse("postgresql://user@localhost/app")
+        self.assertEqual(config["ENGINE"], "django.db.backends.postgresql")
+        self.assertEqual(config["HOST"], "localhost")
+        self.assertEqual(config["PORT"], "")
+
+    def test_sqlite_relative_and_absolute_paths(self):
+        relative = self.parse("sqlite:///db.sqlite3")
+        self.assertEqual(relative["ENGINE"], "django.db.backends.sqlite3")
+        self.assertEqual(relative["NAME"], "db.sqlite3")
+
+        absolute = self.parse("sqlite:////var/data/db.sqlite3")
+        self.assertEqual(absolute["NAME"], "/var/data/db.sqlite3")
+
+        memory = self.parse("sqlite://:memory:")
+        self.assertEqual(memory["NAME"], ":memory:")
+
+    def test_unsupported_scheme_is_rejected(self):
+        from django.core.exceptions import ImproperlyConfigured
+        with self.assertRaises(ImproperlyConfigured):
+            self.parse("oracle://user@host/db")
+
+
+class SettingsGuardTests(TestCase):
+    """Test the production guards in settings.py.
+
+    The guards raise ImproperlyConfigured at settings-module import time, so
+    each scenario runs in a subprocess with a controlled environment instead
+    of mutating the live settings of the test process.
+    """
+
+    GUARDED_VARS = (
+        "DJANGO_DEBUG",
+        "DJANGO_SECRET_KEY",
+        "DJANGO_ALLOWED_HOSTS",
+        "DJANGO_CORS_ORIGINS",
+        "DJANGO_EMAIL_BACKEND",
+        "DJANGO_DATABASE_URL",
+    )
+
+    # A complete, valid production environment; individual tests drop one
+    # variable from it and expect a loud startup failure.
+    PRODUCTION_ENV = {
+        "DJANGO_DEBUG": "False",
+        "DJANGO_SECRET_KEY": "test-production-secret-key",
+        "DJANGO_ALLOWED_HOSTS": "api.example.com",
+        "DJANGO_CORS_ORIGINS": "https://app.example.com",
+        "DJANGO_EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+        "DJANGO_DATABASE_URL": "postgres://user:pass@db.example.com:5432/app",
+    }
+
+    def import_settings(self, env_overrides):
+        from pathlib import Path
+        project_root = Path(__file__).resolve().parent.parent
+        env = {
+            key: value for key, value in os.environ.items()
+            if key not in self.GUARDED_VARS
+        }
+        env.update(env_overrides)
+        return subprocess.run(
+            [sys.executable, "-c", "import organic_mind_backend.settings"],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(project_root),
+        )
+
+    def test_production_environment_imports_cleanly(self):
+        result = self.import_settings(self.PRODUCTION_ENV)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_missing_email_backend_refuses_to_start(self):
+        env = {k: v for k, v in self.PRODUCTION_ENV.items()
+               if k != "DJANGO_EMAIL_BACKEND"}
+        result = self.import_settings(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ImproperlyConfigured", result.stderr)
+        self.assertIn("DJANGO_EMAIL_BACKEND", result.stderr)
+
+    def test_missing_cors_origins_refuses_to_start(self):
+        env = {k: v for k, v in self.PRODUCTION_ENV.items()
+               if k != "DJANGO_CORS_ORIGINS"}
+        result = self.import_settings(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ImproperlyConfigured", result.stderr)
+        self.assertIn("DJANGO_CORS_ORIGINS", result.stderr)
+
+    def test_missing_database_url_refuses_to_start(self):
+        env = {k: v for k, v in self.PRODUCTION_ENV.items()
+               if k != "DJANGO_DATABASE_URL"}
+        result = self.import_settings(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ImproperlyConfigured", result.stderr)
+        self.assertIn("DJANGO_DATABASE_URL", result.stderr)
 
