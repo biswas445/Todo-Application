@@ -17,5 +17,7 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: [],
+    // tests/e2e holds Playwright specs, which vitest must not load
+    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
   },
 });

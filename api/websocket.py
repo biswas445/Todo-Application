@@ -3,9 +3,7 @@ WebSocket consumers for real-time notifications
 """
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
-from channels.routing import URLRouter
 from django.urls import path
-from asgiref.sync import sync_to_async
 
 
 class NotificationConsumer(AsyncWebsocketConsumer):
@@ -43,13 +41,18 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
 
-    async def receive(self, text_data):
+    async def receive(self, text_data=None, bytes_data=None):
         """
-        Receive message from WebSocket
-        Currently we don't expect messages from client, but keeping for future extensibility
+        Receive message from WebSocket.
+        Currently we don't expect messages from client, but keeping for future
+        extensibility. Accepts both text and binary frames: the base consumer
+        dispatches binary frames as ``bytes_data``, so omitting that keyword
+        would raise TypeError and drop the connection.
         """
+        if text_data is None:
+            return
         try:
-            data = json.loads(text_data)
+            json.loads(text_data)
             # Handle any client messages if needed in future
         except json.JSONDecodeError:
             pass

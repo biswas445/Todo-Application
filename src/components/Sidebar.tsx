@@ -1,5 +1,5 @@
 import { type RefObject } from 'react';
-import { ArrowLeft, ArrowRight, Bell, CalendarDays, FileText, List, Search, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bell, CalendarDays, CheckSquare, FileText, List, Search, SlidersHorizontal, X } from 'lucide-react';
 import type { Store } from '@/store/useAppStore';
 import { todayStr } from '@/utils/format';
 
@@ -16,6 +16,8 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
   const upcomingCount = data.tasks.filter((t) => t.dueDate && !t.completed).length;
   const calendarCount = data.events.length + data.tasks.filter((t) => t.dueDate && !t.completed).length;
   const stickyWallCount = data.notes.length;
+  const completedCount = data.tasks.filter((t) => t.completed).length;
+  const unreadNotificationsCount = data.notifications.filter((n) => !n.read).length;
 
   const nav = (target: string) => { onPage(target); };
 
@@ -30,15 +32,13 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
           <button className={page === 'Today' ? 'active' : ''} onClick={() => nav('Today')}><List size={16} /><span>Today</span>{todayCount > 0 && <small>{todayCount}</small>}</button>
           <button className={page === 'Calendar' ? 'active' : ''} onClick={() => nav('Calendar')}><CalendarDays size={16} /><span>Calendar</span>{calendarCount > 0 && <small>{calendarCount}</small>}</button>
           <button className={page === 'Sticky Wall' ? 'active' : ''} onClick={() => nav('Sticky Wall')}><FileText size={16} /><span>Sticky Wall</span>{stickyWallCount > 0 && <small>{stickyWallCount}</small>}</button>
+          <button className={page === 'Notifications' ? 'active' : ''} onClick={() => nav('Notifications')}><Bell size={16} /><span>Notifications</span>{unreadNotificationsCount > 0 && <small>{unreadNotificationsCount}</small>}</button>
+          <button className={page === 'Complete Tasks' ? 'active' : ''} onClick={() => nav('Complete Tasks')}><CheckSquare size={16} /><span>Complete Tasks</span>{completedCount > 0 && <small>{completedCount}</small>}</button>
         </nav>
-
-        <div className="side-section">
-          <button className={page === 'Notifications' ? 'active' : ''} onClick={() => nav('Notifications')}><Bell size={16} /><span>Notifications</span>{data.notifications.length > 0 && <small>{data.notifications.length}</small>}</button>
-        </div>
 
         <div className="side-section lists">
           <p className="side-label">LISTS</p>
-          {data.lists.map((list) => {
+          {data.lists.slice(0, 5).map((list) => {
             const count = data.tasks.filter((t) => t.listId === list.id && !t.completed).length;
             return (
               <div key={list.id} className={`side-link-row ${page === `list-${list.id}` ? 'active' : ''}`}>
@@ -56,7 +56,7 @@ export function Sidebar({ page, onPage, store, searchQuery, onSearch, onClearSea
         <div className="side-section tags">
           <p className="side-label">TAGS</p>
           <div className="tag-list-wrap">
-            {data.tags.map((tag) => {
+            {data.tags.slice(0, 5).map((tag) => {
               const count = data.tasks.filter((t) => t.tagIds.includes(tag.id) && !t.completed).length;
               const tagClassMap: Record<string, string> = { cyan: 'cyan-tag', coral: 'coral-tag', yellow: 'yellow-tag', green: 'green-tag', blue: 'blue-tag' };
               return (

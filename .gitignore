@@ -7,6 +7,10 @@ dist/
 build/
 target/
 
+# Database
+db.sqlite3
+*.sqlite3
+
 # Python
 __pycache__/
 *.pyc
@@ -31,6 +35,7 @@ htmlcov/
 .env
 .env.local
 .env.*
+!.env.example
 
 # IDE
 .vscode/
@@ -47,6 +52,12 @@ Thumbs.db
 coverage/
 htmlcov/
 *.coverage
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 
 # Temporary files
 *.tmp

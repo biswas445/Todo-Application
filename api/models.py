@@ -15,7 +15,7 @@ class User(AbstractUser):
     start_of_week = models.CharField(max_length=10, default='Monday')
     time_format = models.CharField(max_length=10, default='12-hour')
     push_notifications = models.BooleanField(default=True)
-    task_reminders = models.BooleanField(default=False)
+    task_reminders = models.BooleanField(default=True)
     
     class Meta:
         db_table = 'users'
@@ -168,7 +168,7 @@ class CalendarEvent(models.Model):
         ('green', 'Green'),
         ('blue', 'Blue'),
     ]
-    
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='events')
     title = models.CharField(max_length=120)
     description = models.TextField(blank=True, max_length=1000)
@@ -178,10 +178,38 @@ class CalendarEvent(models.Model):
     color = models.CharField(max_length=20, choices=COLOR_CHOICES, default='cyan')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'calendar_events'
         ordering = ['date', 'start_time']
-    
+
     def __str__(self):
         return f"{self.title} ({self.date})"
+
+
+class Notification(models.Model):
+    """Persisted user notification.
+
+    dedup_key guarantees a given notification event (task completed,
+    day-before reminder, due-time reminder) is stored at most once per user.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    message = models.CharField(max_length=500)
+    dedup_key = models.CharField(max_length=200)
+    read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'notifications'
+        ordering = ['created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'dedup_key'],
+                name='unique_notification_user_dedup_key'
+            )
+        ]
+
+    def __str__(self):
+        return self.message[:50]

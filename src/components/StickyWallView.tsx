@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { Store, EntityId } from '@/store/useAppStore';
 import type { Note, NoteColor } from '@/types';
@@ -18,9 +18,19 @@ export function StickyWallView({ store }: { store: Store }) {
   const [editBody, setEditBody] = useState('');
   const [editColor, setEditColor] = useState<NoteColor>('note-yellow');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showDiscard, setShowDiscard] = useState(false);
+  // Tracks whether the discard prompt was triggered by closing the modal or
+  // by cancelling edit mode, so Discard performs the attempted action.
+  const discardIntent = useRef<'close' | 'cancel'>('close');
 
   const selectedNote: Note | null = selectedNoteId ? data.notes.find((n) => n.id === selectedNoteId) ?? null : null;
   const dateFormat = store.data.settings.dateFormat;
+
+  const hasUnsavedChanges = isEditing && selectedNote !== null && (
+    editTitle !== selectedNote.title ||
+    editBody !== selectedNote.body ||
+    editColor !== selectedNote.color
+  );
 
   useEffect(() => {
     if (!selectedNote) return;
@@ -29,16 +39,28 @@ export function StickyWallView({ store }: { store: Store }) {
     setEditColor(selectedNote.color);
     setConfirmDelete(false);
     setIsEditing(false);
+    setShowDiscard(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNote?.id]);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedNoteId(null); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (showDiscard) { setShowDiscard(false); return; }
+      if (hasUnsavedChanges) { discardIntent.current = 'close'; setShowDiscard(true); }
+      else setSelectedNoteId(null);
+    };
     if (selectedNoteId) window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedNoteId]);
+  }, [selectedNoteId, showDiscard, hasUnsavedChanges]);
 
-  const addNote = () => { const note = store.addNote(); setSelectedNoteId(note.id); setIsEditing(true); };
+  const addNote = async () => {
+    const note = await store.addNote();
+    if (note) {
+      setSelectedNoteId(note.id);
+      setIsEditing(true);
+    }
+  };
 
   const saveNote = () => {
     if (selectedNote) {
@@ -51,6 +73,22 @@ export function StickyWallView({ store }: { store: Store }) {
     }
   };
   const deleteNote = () => { if (selectedNote) { store.deleteNote(selectedNote.id); setSelectedNoteId(null); } };
+
+  const requestClose = () => {
+    if (hasUnsavedChanges) { discardIntent.current = 'close'; setShowDiscard(true); }
+    else setSelectedNoteId(null);
+  };
+
+  const requestCancelEdit = () => {
+    if (hasUnsavedChanges) { discardIntent.current = 'cancel'; setShowDiscard(true); }
+    else setIsEditing(false);
+  };
+
+  const confirmDiscard = () => {
+    setShowDiscard(false);
+    setIsEditing(false);
+    if (discardIntent.current === 'close') setSelectedNoteId(null);
+  };
 
   return (
     <div className="view-content sticky-view">
@@ -72,9 +110,9 @@ export function StickyWallView({ store }: { store: Store }) {
         </div>
       )}
       {selectedNote && (
-        <div className="modal-backdrop" onClick={() => setSelectedNoteId(null)}>
-          <div className="note-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="close-modal" onClick={() => setSelectedNoteId(null)} aria-label="Close note"><X size={18} /></button>
+        <div className="modal-backdrop" onClick={requestClose}>
+          <div className="note-modal note-modal-lg" onClick={(e) => e.stopPropagation()}>
+            <button className="close-modal" onClick={requestClose} aria-label="Close note"><X size={18} /></button>
             {!isEditing ? (
               <>
                 <div className="note-swatch note-swatch-detail">{noteColors.find((c) => c.value === selectedNote.color)?.label}</div>
@@ -106,12 +144,23 @@ export function StickyWallView({ store }: { store: Store }) {
                   <div className="note-modal-actions">
                     <button className="danger-btn-text" onClick={() => setConfirmDelete(true)} aria-label="Delete note"><Trash2 size={15} />Delete</button>
                     <div className="modal-actions-right">
-                      <button className="outline-button small-btn" onClick={() => setIsEditing(false)}>Cancel</button>
+                      <button className="outline-button small-btn" onClick={requestCancelEdit}>Cancel</button>
                       <button className="primary-button small-btn edit-btn" onClick={saveNote}>Save</button>
                     </div>
                   </div>
                 )}
               </>
+            )}
+            {showDiscard && (
+              <div className="modal-backdrop-inner" onClick={(e) => e.stopPropagation()}>
+                <div className="discard-dialog">
+                  <p>Discard unsaved changes?</p>
+                  <div className="discard-actions">
+                    <button className="outline-button small-btn" onClick={() => setShowDiscard(false)}>Keep editing</button>
+                    <button className="danger-btn small-btn" onClick={confirmDiscard}>Discard</button>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>

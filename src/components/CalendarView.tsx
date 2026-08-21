@@ -6,7 +6,7 @@ import { LIMITS } from '@/types';
 import { localISO, formatTime, todayStr, formatDate } from '@/utils/format';
 
 type ViewMode = 'Day' | 'Week' | 'Month';
-type CalItem = { id: string; title: string; date: string; time: string; color: string; taskId?: EntityId; isTask: boolean; description?: string };
+type CalItem = { id: string; title: string; date: string; time: string; endTime: string; color: string; taskId?: EntityId; isTask: boolean; description?: string };
 
 const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -49,8 +49,8 @@ export function CalendarView({ store, onOpenTask }: { store: Store; onOpenTask: 
 
   // Derive calendar items from current state - no caching
   const allEvents: CalItem[] = useMemo(() => [
-    ...data.events.map((e) => ({ id: `event-${e.id}`, title: e.title, date: e.date, time: e.startTime, color: e.color, isTask: false, description: e.description })),
-    ...data.tasks.filter((t) => t.dueDate).map((t) => ({ id: `task-${t.id}`, title: t.title, date: t.dueDate!, time: '12:00', color: getListColor(t, data.lists), taskId: t.id, isTask: true })),
+    ...data.events.map((e) => ({ id: `event-${e.id}`, title: e.title, date: e.date, time: e.startTime, endTime: e.endTime, color: e.color, isTask: false, description: e.description })),
+    ...data.tasks.filter((t) => t.dueDate && !t.completed).map((t) => ({ id: `task-${t.id}`, title: t.title, date: t.dueDate!, time: '12:00', endTime: '13:00', color: getListColor(t, data.lists), taskId: t.id, isTask: true })),
   ], [data.events, data.tasks, data.lists]);
 
   const goPrev = () => { const d = new Date(current); if (mode === 'Day') d.setDate(d.getDate() - 1); else if (mode === 'Week') d.setDate(d.getDate() - 7); else d.setMonth(d.getMonth() - 1); setCurrent(d); };
@@ -121,7 +121,7 @@ export function CalendarView({ store, onOpenTask }: { store: Store; onOpenTask: 
       </div>
       {mode === 'Day' && <DayView date={current} events={allEvents} onItemClick={handleItemClick} timeFormat={timeFormat} />}
       {mode === 'Week' && <WeekView date={current} events={allEvents} onItemClick={handleItemClick} startOfWeek={startOfWeek} timeFormat={timeFormat} />}
-      {mode === 'Month' && <MonthView date={current} events={allEvents} onItemClick={handleItemClick} />}
+      {mode === 'Month' && <MonthView date={current} events={allEvents} onItemClick={handleItemClick} timeFormat={timeFormat} startOfWeek={startOfWeek} />}
       {showEventModal && (
         <div className="modal-backdrop" onClick={closeModal}>
           <div className="note-modal event-modal" onClick={(e) => e.stopPropagation()}>
@@ -183,60 +183,79 @@ export function CalendarView({ store, onOpenTask }: { store: Store; onOpenTask: 
 }
 
 function DayView({ date, events, onItemClick, timeFormat }: { date: Date; events: CalItem[]; onItemClick: (item: CalItem) => void; timeFormat: string }) {
-  // Extract just the date portion (YYYY-MM-DD) for comparison
-  const selectedDateStr = date.toISOString().split('T')[0];
-  
-  // Filter events by comparing just the date parts to handle different date formats
-  const dayEvents = events.filter((e) => {
-    // If e.date is already in YYYY-MM-DD format (10 chars), compare directly
-    if (e.date.length === 10) {
-      return e.date === selectedDateStr;
-    }
-    // If e.date includes time or timezone info, extract just the date part
-    return new Date(e.date).toISOString().split('T')[0] === selectedDateStr;
-  }).sort((a, b) => a.time.localeCompare(b.time));
-  const hours = timeFormat === '24-hour'
-    ? ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00']
-    : ['09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM'];
-  
-  // Group events by exact time for stacking
-  const eventsByTime = new Map<string, CalItem[]>();
-  dayEvents.forEach((e) => {
-    const key = e.time;
-    if (!eventsByTime.has(key)) eventsByTime.set(key, []);
-    eventsByTime.get(key)!.push(e);
+  // Same hour-grid stacking logic as Week view, just one column instead of seven.
+  return <HourGrid columns={[buildColumn(date, events)]} timeFormat={timeFormat} onItemClick={onItemClick} emptyMessage="No events for this day." />;
+}
+
+function toMinutes(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+type HourGridColumn = { key: string; head: string; isToday: boolean; byHour: Map<number, CalItem[]> };
+
+// Build one grid column (a single day) with its events grouped by start hour.
+function buildColumn(d: Date, events: CalItem[]): HourGridColumn {
+  const ds = localISO(d);
+  const byHour = new Map<number, CalItem[]>();
+  events.filter((e) => e.date === ds).forEach((e) => {
+    const hour = Math.floor(toMinutes(e.time) / 60) * 60;
+    if (!byHour.has(hour)) byHour.set(hour, []);
+    byHour.get(hour)!.push(e);
   });
-  
+  byHour.forEach((list) => list.sort((a, b) => a.time.localeCompare(b.time)));
+  return { key: ds, head: `${dayNames[d.getDay()]} ${d.getDate()}`, isToday: ds === todayStr(), byHour };
+}
+
+// Shared hour-row grid used by both Day (1 column) and Week (7 columns) views.
+// Same-time events stack vertically at full column width; each hour row expands to fit.
+function HourGrid({ columns, timeFormat, onItemClick, emptyMessage }: { columns: HourGridColumn[]; timeFormat: string; onItemClick: (item: CalItem) => void; emptyMessage?: string }) {
+  const starts: number[] = [];
+  let totalEvents = 0;
+  columns.forEach((col) => col.byHour.forEach((list, hour) => { starts.push(hour); totalEvents += list.length; }));
+  let gridStart: number; let gridEnd: number;
+  if (starts.length === 0) { gridStart = 9 * 60; gridEnd = 17 * 60; }
+  else {
+    gridStart = Math.min(...starts);
+    gridEnd = Math.max(...starts) + 60;
+  }
+  if (gridEnd - gridStart < 8 * 60) gridEnd = gridStart + 8 * 60;
+  gridStart = Math.max(0, gridStart);
+  gridEnd = Math.min(24 * 60, gridEnd);
+  if (gridEnd <= gridStart) gridEnd = Math.min(24 * 60, gridStart + 8 * 60);
+
+  const hourRows: number[] = [];
+  for (let m = gridStart; m < gridEnd; m += 60) hourRows.push(m);
+  const hourLabel = (min: number) => formatTime(`${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`, timeFormat);
+  const gridCols = `56px repeat(${columns.length}, minmax(0, 1fr))`;
+
   return (
-    <div className="calendar-grid">
-      <div className="day-label">{dayNames[date.getDay()].toUpperCase()}</div>
-      {hours.map((timeSlot, idx) => {
-        const slotEvents = eventsByTime.get(timeSlot) || [];
-        const hasMultiple = slotEvents.length > 1;
-        
-        return (
-          <div className="time-slot" key={timeSlot}>
-            <span>{timeSlot}</span>
-            <div className="slot-line" />
-            {slotEvents.length === 0 ? null : hasMultiple ? (
-              // Stack multiple events vertically with connecting lines
-              <div className="stacked-events-container" style={{ display: 'flex', flexDirection: 'column', gap: '0', position: 'absolute', left: '130px', right: '18px', top: '11px' }}>
-                {slotEvents.map((e, i) => (
-                  <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'} stacked-event`} onClick={() => onItemClick(e)}>
-                    {e.title}
-                    {i < slotEvents.length - 1 && <div className="stack-connector" />}
+    <div className="week-tg">
+      <div className="week-tg-head" style={{ gridTemplateColumns: gridCols }}>
+        <div className="week-tg-corner" />
+        {columns.map((col) => (
+          <div key={col.key} className={`week-tg-day-head ${col.isToday ? 'week-tg-today' : ''}`}>{col.head}</div>
+        ))}
+      </div>
+      {hourRows.map((hourMin, rowIdx) => (
+        <div className="week-row" key={hourMin} style={{ gridTemplateColumns: gridCols }}>
+          <div className="week-row-gutter">{hourLabel(hourMin)}</div>
+          {columns.map((col, colIdx) => {
+            const cellEvents = col.byHour.get(hourMin) || [];
+            return (
+              <div key={col.key} className={`week-cell ${col.isToday ? 'week-cell-today' : ''}`}>
+                {rowIdx === 0 && colIdx === 0 && totalEvents === 0 && emptyMessage && <div className="hour-grid-empty">{emptyMessage}</div>}
+                {cellEvents.map((e) => (
+                  <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'} week-stack-event`} onClick={() => onItemClick(e)}>
+                    <span className="week-tg-event-title">{e.title}</span>
+                    <span className="week-tg-event-time">{formatTime(e.time, timeFormat)}</span>
                   </div>
                 ))}
               </div>
-            ) : (
-              // Single event - normal rendering
-              slotEvents.map((e) => (
-                <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'}`} onClick={() => onItemClick(e)}>{e.title}</div>
-              ))
-            )}
-          </div>
-        );
-      })}
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }
@@ -244,36 +263,39 @@ function DayView({ date, events, onItemClick, timeFormat }: { date: Date; events
 function WeekView({ date, events, onItemClick, startOfWeek, timeFormat }: { date: Date; events: CalItem[]; onItemClick: (item: CalItem) => void; startOfWeek: 'Monday' | 'Sunday' | 'Saturday'; timeFormat: string }) {
   const start = getWeekStart(date, startOfWeek);
   const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(start); d.setDate(d.getDate() + i); return d; });
-  return (
-    <div className="week-grid">
-      {days.map((d) => {
-        const ds = localISO(d); const dayEvents = events.filter((e) => e.date === ds);
-        // Handle collision layout for overlapping items in week view
-        const hasMultiple = dayEvents.length > 1;
-        return <div className="week-day" key={ds}><div className="week-day-head">{dayNames[d.getDay()]} {d.getDate()}</div><div className="week-day-body">{dayEvents.length === 0 ? <span className="week-empty">—</span> : dayEvents.map((e, i) => {
-          const width = hasMultiple ? `${Math.min(100 / dayEvents.length, 48)}%` : undefined;
-          const left = hasMultiple ? `${(i * (100 / dayEvents.length))}%` : undefined;
-          return <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'} week-event`} style={{ width, left }} onClick={() => onItemClick(e)}>{formatTime(e.time, timeFormat)} {e.title}</div>;
-        })}</div></div>;
-      })}
-    </div>
-  );
+  return <HourGrid columns={days.map((d) => buildColumn(d, events))} timeFormat={timeFormat} onItemClick={onItemClick} />;
 }
 
-function MonthView({ date, events, onItemClick }: { date: Date; events: CalItem[]; onItemClick: (item: CalItem) => void }) {
+function MonthView({ date, events, onItemClick, timeFormat, startOfWeek }: { date: Date; events: CalItem[]; onItemClick: (item: CalItem) => void; timeFormat: string; startOfWeek: 'Monday' | 'Sunday' | 'Saturday' }) {
   const year = date.getFullYear(); const month = date.getMonth();
+  // Align the grid with the user's start-of-week setting (Week view already
+  // does this via getWeekStart; month view used to be hardcoded Sunday-first).
+  const offsetMap = { Sunday: 0, Monday: 1, Saturday: 6 };
+  const offset = offsetMap[startOfWeek];
+  const orderedDayNames = Array.from({ length: 7 }, (_, i) => dayNames[(offset + i) % 7]);
   const firstDay = new Date(year, month, 1).getDay(); const daysInMonth = new Date(year, month + 1, 0).getDate();
   const cells: (Date | null)[] = [];
-  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let i = 0; i < (firstDay - offset + 7) % 7; i++) cells.push(null);
   for (let i = 1; i <= daysInMonth; i++) cells.push(new Date(year, month, i));
   while (cells.length % 7 !== 0) cells.push(null);
   return (
     <div className="month-grid">
-      {dayNames.map((d) => <div className="month-dow" key={d}>{d}</div>)}
+      {orderedDayNames.map((d) => <div className="month-dow" key={d}>{d}</div>)}
       {cells.map((d, i) => {
         if (!d) return <div className="month-cell empty" key={i} />;
         const ds = localISO(d); const dayEvents = events.filter((e) => e.date === ds); const isToday = ds === todayStr();
-        return <div className={`month-cell ${isToday ? 'month-today' : ''}`} key={i}><span className="month-date">{d.getDate()}</span>{dayEvents.slice(0, 3).map((e) => <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'} month-event`} onClick={() => onItemClick(e)}>{e.title}</div>)}{dayEvents.length > 3 && <span className="month-more">+{dayEvents.length - 3} more</span>}</div>;
+        return (
+          <div className={`month-cell ${isToday ? 'month-today' : ''}`} key={i}>
+            <span className="month-date">{d.getDate()}</span>
+            {dayEvents.slice(0, 3).map((e) => (
+              <div key={e.id} className={`event ${colorClassMap[e.color] || 'event-cyan'} month-event`} onClick={() => onItemClick(e)}>
+                <span className="month-event-title">{e.title}</span>
+                <span className="month-event-time">{formatTime(e.time, timeFormat)}</span>
+              </div>
+            ))}
+            {dayEvents.length > 3 && <span className="month-more">+{dayEvents.length - 3} more</span>}
+          </div>
+        );
       })}
     </div>
   );

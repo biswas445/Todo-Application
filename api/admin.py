@@ -3,7 +3,7 @@ Django admin configuration for Organic Mind.
 Provides useful list displays and search/filtering for all models.
 """
 from django.contrib import admin
-from .models import User, List, Tag, Task, Subtask, Note, CalendarEvent
+from .models import User, List, Tag, Task, Subtask, Note, CalendarEvent, Notification
 
 
 @admin.register(User)
@@ -71,3 +71,11 @@ class CalendarEventAdmin(admin.ModelAdmin):
     search_fields = ['title', 'description', 'user__username', 'user__email']
     raw_id_fields = ['user']
     date_hierarchy = 'date'
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ['message', 'user', 'dedup_key', 'read', 'created_at']
+    list_filter = ['read', 'user']
+    search_fields = ['message', 'dedup_key', 'user__username', 'user__email']
+    raw_id_fields = ['user']

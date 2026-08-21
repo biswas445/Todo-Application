@@ -19,6 +19,14 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
   const isWelcome = view === 'welcome';
   const isSignup = view === 'signup';
 
+  // Passwords must be typed manually: block paste/copy/cut and drag-drop
+  const noClipboard = {
+    onPaste: (e: React.ClipboardEvent<HTMLInputElement>) => e.preventDefault(),
+    onCopy: (e: React.ClipboardEvent<HTMLInputElement>) => e.preventDefault(),
+    onCut: (e: React.ClipboardEvent<HTMLInputElement>) => e.preventDefault(),
+    onDrop: (e: React.DragEvent<HTMLInputElement>) => e.preventDefault(),
+  };
+
   const [signinEmail, setSigninEmail] = useState('');
   const [signinPassword, setSigninPassword] = useState('');
   const [signinError, setSigninError] = useState('');
@@ -31,10 +39,10 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
   const [signupShow, setSignupShow] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
 
-  const handleSignIn = (event: React.FormEvent) => {
+  const handleSignIn = async (event: React.FormEvent) => {
     event.preventDefault();
     setSigninError('');
-    const result = store.signIn(signinEmail, signinPassword);
+    const result = await store.signIn(signinEmail, signinPassword);
     if (!result.ok) { setSigninError(result.error || 'Sign in failed.'); }
   };
 
@@ -47,7 +55,8 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
       setSignupError(result.error || 'Sign up failed.'); 
       return; 
     }
-    // Registration successful - show success message and redirect to signin
+    // Registration successful - show success message and redirect to signin.
+    // The account must verify its email before sign-in will succeed.
     setSignupSuccess(true);
     setSignupName(''); 
     setSignupEmail(''); 
@@ -82,7 +91,7 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
             <h1>{isSignup ? 'Create account' : 'Sign in'}</h1>
             {isSignup && <p className="form-intro">A calmer place to collect your tasks, plans, and ideas.</p>}
             {!isSignup && signupSuccess && (
-              <p className="auth-success"><CheckCircle size={16} /> Account created successfully. Please sign in.</p>
+              <p className="auth-success"><CheckCircle size={16} /> Account created. Check your email to verify your address, then sign in.</p>
             )}
             {isSignup && (
               <label>Name<input type="text" placeholder="Your name" value={signupName} onChange={(e) => setSignupName(e.target.value)} required /></label>
@@ -90,17 +99,17 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
             {isSignup ? (
               <>
                 <label>Email<input type="email" placeholder="email.email@mail.com" value={signupEmail} onChange={(e) => setSignupEmail(e.target.value)} required /></label>
-                <label className="settings-field">Password<div className="password-field"><input type={signupShow ? 'text' : 'password'} placeholder="Enter your password" value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} required autoComplete="new-password" /><button type="button" onClick={() => setSignupShow(!signupShow)} aria-label="Toggle password visibility">{signupShow ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
+                <label>Password<div className="password-field"><input type={signupShow ? 'text' : 'password'} placeholder="Enter your password" value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} {...noClipboard} required autoComplete="new-password" /><button type="button" onClick={() => setSignupShow(!signupShow)} aria-label="Toggle password visibility">{signupShow ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
               </>
             ) : (
               <>
                 <label>Email<input type="email" placeholder="email.email@mail.com" value={signinEmail} onChange={(e) => setSigninEmail(e.target.value)} required /></label>
-                <label className="settings-field">Password<div className="password-field"><input type={signinShow ? 'text' : 'password'} placeholder="Enter your password" value={signinPassword} onChange={(e) => setSigninPassword(e.target.value)} required autoComplete="current-password" /><button type="button" onClick={() => setSigninShow(!signinShow)} aria-label="Toggle password visibility">{signinShow ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
+                <label>Password<div className="password-field"><input type={signinShow ? 'text' : 'password'} placeholder="Enter your password" value={signinPassword} onChange={(e) => setSigninPassword(e.target.value)} {...noClipboard} required autoComplete="current-password" /><button type="button" onClick={() => setSigninShow(!signinShow)} aria-label="Toggle password visibility">{signinShow ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
               </>
             )}
             {!isSignup && signinError && <p className="auth-error">{signinError}</p>}
             {isSignup && signupError && <p className="auth-error">{signupError}</p>}
-            <button className="primary-button" type="submit">{isSignup ? 'Sign up' : 'Sign in'}</button>
+            <button className="primary-button" type="submit" disabled={store.authPending}>{store.authPending ? (isSignup ? 'Signing up...' : 'Signing in...') : (isSignup ? 'Sign up' : 'Sign in')}</button>
             <button className="text-button" type="button" onClick={() => switchView(isSignup ? 'signin' : 'signup')}>{isSignup ? 'Already have an account? ' : "Don't have an account? "}<strong>{isSignup ? 'Sign in' : 'Sign up'}</strong></button>
           </form>
         )}

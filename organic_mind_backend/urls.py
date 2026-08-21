@@ -19,7 +19,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from api.views import (
     AuthViewSet, UserViewSet, ListViewSet, TagViewSet, TaskViewSet,
-    NoteViewSet, CalendarEventViewSet
+    NoteViewSet, CalendarEventViewSet, NotificationViewSet, health_check
 )
 
 router = DefaultRouter()
@@ -30,8 +30,11 @@ router.register(r'tags', TagViewSet, basename='tag')
 router.register(r'tasks', TaskViewSet, basename='task')
 router.register(r'notes', NoteViewSet, basename='note')
 router.register(r'events', CalendarEventViewSet, basename='event')
+router.register(r'notifications', NotificationViewSet, basename='notification')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # Unauthenticated liveness probe (kept separate from the authed API router)
+    path('api/health/', health_check, name='health-check'),
     path('api/', include(router.urls)),
 ]

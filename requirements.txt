@@ -1,13 +1,12 @@
 # Django Framework
-django
-djangorestframework
-django-cors-headers
+django==6.1
+djangorestframework==3.18.0
+django-cors-headers==4.9.0
 
 # Real-time Features (WebSockets)
-channels
-daphne
-channels_redis
+channels==4.3.2
+daphne==4.2.3
+channels_redis==4.3.0
 
 # Utilities
-Pillow
-pytz
+pytz==2026.3.post1

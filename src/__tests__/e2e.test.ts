@@ -180,7 +180,7 @@ describe('End-to-End Tests', () => {
     });
 
     it('should create a list', async () => {
-      const newList = { id: '1', label: 'Work', color: '#FF5733' };
+      const newList = { id: '1', label: 'Work', color: 'coral' };
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 201,
@@ -188,9 +188,16 @@ describe('End-to-End Tests', () => {
       });
 
       const { listsApi } = await import('@/api/index');
-      const result = await listsApi.create({ label: 'Work', color: '#FF5733' });
+      const result = await listsApi.create('Work', 'coral');
 
       expect(result).toEqual(newList);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/lists/'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ label: 'Work', color: 'coral' }),
+        })
+      );
     });
 
     it('should delete a list', async () => {
@@ -217,7 +224,7 @@ describe('End-to-End Tests', () => {
     });
 
     it('should create a tag', async () => {
-      const newTag = { id: '1', label: 'Urgent', color: '#FF0000' };
+      const newTag = { id: '1', label: 'Urgent', color: 'cyan' };
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 201,
@@ -225,9 +232,16 @@ describe('End-to-End Tests', () => {
       });
 
       const { tagsApi } = await import('@/api/index');
-      const result = await tagsApi.create({ label: 'Urgent', color: '#FF0000' });
+      const result = await tagsApi.create('Urgent', 'cyan');
 
       expect(result).toEqual(newTag);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/tags/'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ label: 'Urgent', color: 'cyan' }),
+        })
+      );
     });
 
     it('should delete a tag', async () => {

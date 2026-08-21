@@ -7,10 +7,41 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from .models import List, Tag, Task, Subtask, Note, CalendarEvent
+from channels.db import database_sync_to_async
+from channels.layers import get_channel_layer
+from channels.testing import WebsocketCommunicator
+from organic_mind_backend.asgi import application
+from .models import List, Tag, Task, Subtask, Note, CalendarEvent, Notification
+from unittest import mock
+import re
 import uuid
 
 User = get_user_model()
+
+
+def extract_verification_token():
+    """Pull the email-verification token out of the test mail outbox."""
+    from django.core import mail
+    message = mail.outbox[-1]
+    match = re.search(r"token=(\S+)", message.body)
+    assert match, "No verification link found in the outbox email"
+    return match.group(1)
+
+
+def register_and_activate(client, user_data):
+    """Register via the API, follow the emailed verification link, and log in.
+
+    Returns the login response so callers can grab the auth token.
+    """
+    response = client.post("/api/auth/register/", user_data)
+    assert response.status_code == status.HTTP_201_CREATED, response.content
+    token = extract_verification_token()
+    verify = client.get(f"/api/auth/verify_email/?token={token}")
+    assert verify.status_code == status.HTTP_200_OK, verify.content
+    return client.post(
+        "/api/auth/login/",
+        {"email": user_data["email"], "password": user_data["password"]},
+    )
 
 
 class AuthenticationTests(TestCase):
@@ -24,57 +55,125 @@ class AuthenticationTests(TestCase):
         self.user_data = {
             "username": "testuser",
             "email": "test@example.com",
-            "password": "password123",
+            "password": "securePass-2026x",
             "first_name": "Test",
             "last_name": "User"
         }
         
     def test_register_user(self):
-        """Test user registration creates account and returns token."""
+        """Test registration creates an inactive account and emails a link."""
         response = self.client.post(self.register_url, self.user_data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertIn("token", response.data)
+        # No token before the email is verified.
+        self.assertNotIn("token", response.data)
         self.assertIn("user", response.data)
         self.assertEqual(response.data["user"]["email"], "test@example.com")
-        
+
+        user = User.objects.get(email="test@example.com")
+        self.assertFalse(user.is_active)
+        # A verification email was sent.
+        from django.core import mail
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("verify_email", mail.outbox[0].body)
+
     def test_register_duplicate_email_fails(self):
         """Test registering with same email fails."""
         self.client.post(self.register_url, self.user_data)
         response = self.client.post(self.register_url, self.user_data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("email", response.data)
-        
+
+    def test_register_duplicate_email_different_username_fails_cleanly(self):
+        """Test a duplicate email with a NEW username is a 400, not a 500.
+
+        The unique constraint on email lives in Meta.constraints, which DRF
+        does not enforce, so without explicit serializer validation this hit
+        the database and surfaced as an IntegrityError/500.
+        """
+        self.client.post(self.register_url, self.user_data)
+        duplicate = dict(self.user_data, username="otheruser")
+        response = self.client.post(self.register_url, duplicate)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", response.data)
+        self.assertEqual(User.objects.filter(email="test@example.com").count(), 1)
+
+    def test_register_rejects_common_password(self):
+        """Test the configured password policy is applied at registration."""
+        weak = dict(self.user_data, password="password123")
+        response = self.client.post(self.register_url, weak)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("password", response.data)
+        self.assertFalse(User.objects.filter(email="test@example.com").exists())
+
+    def test_register_rejects_short_password(self):
+        """Test passwords shorter than the validator minimum are rejected."""
+        weak = dict(self.user_data, password="x8Kp2")
+        response = self.client.post(self.register_url, weak)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("password", response.data)
+
+    def test_verify_email_activates_account_and_allows_login(self):
+        """Test the emailed link activates the account."""
+        self.client.post(self.register_url, self.user_data)
+        token = extract_verification_token()
+
+        response = self.client.get(f"/api/auth/verify_email/?token={token}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(User.objects.get(email="test@example.com").is_active)
+
+        login = self.client.post(
+            self.login_url,
+            {"email": "test@example.com", "password": "securePass-2026x"},
+        )
+        self.assertEqual(login.status_code, status.HTTP_200_OK)
+        self.assertIn("token", login.data)
+
+    def test_verify_email_rejects_invalid_token(self):
+        """Test tampered/unknown verification tokens are rejected."""
+        self.client.post(self.register_url, self.user_data)
+        response = self.client.get("/api/auth/verify_email/?token=not-a-real-token")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(User.objects.get(email="test@example.com").is_active)
+
+    def test_login_before_email_verification_fails(self):
+        """Test an unverified account cannot sign in."""
+        self.client.post(self.register_url, self.user_data)
+        login_data = {"email": "test@example.com", "password": "securePass-2026x"}
+        response = self.client.post(self.login_url, login_data)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("verify", response.data["error"].lower())
+
     def test_login_valid_credentials(self):
         """Test login with valid credentials returns token."""
-        self.client.post(self.register_url, self.user_data)
-        login_data = {"email": "test@example.com", "password": "password123"}
+        register_and_activate(self.client, self.user_data)
+        login_data = {"email": "test@example.com", "password": "securePass-2026x"}
         response = self.client.post(self.login_url, login_data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("token", response.data)
-        
+
     def test_login_invalid_credentials(self):
         """Test login with invalid credentials fails."""
-        self.client.post(self.register_url, self.user_data)
+        register_and_activate(self.client, self.user_data)
         login_data = {"email": "test@example.com", "password": "wrongpassword"}
         response = self.client.post(self.login_url, login_data)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-        
+
     def test_login_missing_fields(self):
         """Test login without email or password fails."""
         response = self.client.post(self.login_url, {})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        
+
     def test_logout(self):
         """Test logout invalidates token."""
-        self.client.post(self.register_url, self.user_data)
-        login_data = {"email": "test@example.com", "password": "password123"}
+        register_and_activate(self.client, self.user_data)
+        login_data = {"email": "test@example.com", "password": "securePass-2026x"}
         login_response = self.client.post(self.login_url, login_data)
         token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token}')
-        
+
         response = self.client.post(self.logout_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
+
         # Token should be invalidated
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token}')
         response = self.client.get("/api/user/me/")
@@ -90,11 +189,11 @@ class ProfileTests(TestCase):
         self.user_data = {
             "username": "profileuser",
             "email": "profile@example.com",
-            "password": "password123"
+            "password": "securePass-2026x"
         }
-        # Register and login
-        response = self.client.post(self.register_url, self.user_data)
-        self.token = response.data["token"]
+        # Register, verify the emailed link, and login
+        login_response = register_and_activate(self.client, self.user_data)
+        self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
         self.user = User.objects.get(email="profile@example.com")
         
@@ -160,8 +259,9 @@ class ProfileTests(TestCase):
         """Test invalid timezone format is rejected."""
         data = {"timezone": "Invalid/Timezone"}
         response = self.client.patch("/api/user/update_profile/", data)
-        # Should accept IANA format with /
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Not a real IANA timezone, so it must be rejected
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("timezone", response.data)
         
     def test_update_date_format(self):
         """Test updating date format preference."""
@@ -195,9 +295,9 @@ class ProfileTests(TestCase):
     def test_change_password_valid(self):
         """Test changing password with correct current password."""
         data = {
-            "current_password": "password123",
-            "new_password": "newpassword456",
-            "confirm_password": "newpassword456"
+            "current_password": "securePass-2026x",
+            "new_password": "Refreshed-Pass9x",
+            "confirm_password": "Refreshed-Pass9x"
         }
         response = self.client.post("/api/user/change_password/", data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -205,7 +305,7 @@ class ProfileTests(TestCase):
         # Verify new password works
         login_response = self.client.post(
             "/api/auth/login/",
-            {"email": "profile@example.com", "password": "newpassword456"}
+            {"email": "profile@example.com", "password": "Refreshed-Pass9x"}
         )
         self.assertEqual(login_response.status_code, status.HTTP_200_OK)
         
@@ -213,8 +313,8 @@ class ProfileTests(TestCase):
         """Test changing password with wrong current password fails."""
         data = {
             "current_password": "wrongpassword",
-            "new_password": "newpassword456",
-            "confirm_password": "newpassword456"
+            "new_password": "Refreshed-Pass9x",
+            "confirm_password": "Refreshed-Pass9x"
         }
         response = self.client.post("/api/user/change_password/", data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -222,9 +322,33 @@ class ProfileTests(TestCase):
     def test_change_password_mismatch(self):
         """Test changing password with mismatched new passwords fails."""
         data = {
-            "current_password": "password123",
-            "new_password": "newpassword456",
+            "current_password": "securePass-2026x",
+            "new_password": "Refreshed-Pass9x",
             "confirm_password": "differentpassword"
+        }
+        response = self.client.post("/api/user/change_password/", data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_change_password_rejects_common_password(self):
+        """Test the configured password policy applies to changes too."""
+        data = {
+            "current_password": "securePass-2026x",
+            "new_password": "password123",
+            "confirm_password": "password123"
+        }
+        response = self.client.post("/api/user/change_password/", data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_change_password_rejects_password_similar_to_username(self):
+        """Test the policy compares against the account's own attributes.
+
+        Requires the view to pass the request (and therefore the user) into
+        the serializer context for UserAttributeSimilarityValidator.
+        """
+        data = {
+            "current_password": "securePass-2026x",
+            "new_password": "profileuser2026",
+            "confirm_password": "profileuser2026"
         }
         response = self.client.post("/api/user/change_password/", data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -238,16 +362,16 @@ class ListTests(TestCase):
         self.user = User.objects.create_user(
             username="listuser",
             email="list@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         self.user2 = User.objects.create_user(
             username="listuser2",
             email="list2@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         login_response = self.client.post(
             "/api/auth/login/",
-            {"email": "list@example.com", "password": "password123"}
+            {"email": "list@example.com", "password": "securePass-2026x"}
         )
         self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
@@ -334,16 +458,16 @@ class TagTests(TestCase):
         self.user = User.objects.create_user(
             username="taguser",
             email="tag@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         self.user2 = User.objects.create_user(
             username="taguser2",
             email="tag2@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         login_response = self.client.post(
             "/api/auth/login/",
-            {"email": "tag@example.com", "password": "password123"}
+            {"email": "tag@example.com", "password": "securePass-2026x"}
         )
         self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
@@ -437,16 +561,16 @@ class TaskTests(TestCase):
         self.user = User.objects.create_user(
             username="taskuser",
             email="task@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         self.user2 = User.objects.create_user(
             username="taskuser2",
             email="task2@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         login_response = self.client.post(
             "/api/auth/login/",
-            {"email": "task@example.com", "password": "password123"}
+            {"email": "task@example.com", "password": "securePass-2026x"}
         )
         self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
@@ -587,16 +711,16 @@ class SubtaskTests(TestCase):
         self.user = User.objects.create_user(
             username="subtaskuser",
             email="subtask@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         self.user2 = User.objects.create_user(
             username="subtaskuser2",
             email="subtask2@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         login_response = self.client.post(
             "/api/auth/login/",
-            {"email": "subtask@example.com", "password": "password123"}
+            {"email": "subtask@example.com", "password": "securePass-2026x"}
         )
         self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
@@ -669,16 +793,16 @@ class NoteTests(TestCase):
         self.user = User.objects.create_user(
             username="noteuser",
             email="note@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         self.user2 = User.objects.create_user(
             username="noteuser2",
             email="note2@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         login_response = self.client.post(
             "/api/auth/login/",
-            {"email": "note@example.com", "password": "password123"}
+            {"email": "note@example.com", "password": "securePass-2026x"}
         )
         self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
@@ -750,16 +874,16 @@ class CalendarEventTests(TestCase):
         self.user = User.objects.create_user(
             username="eventuser",
             email="event@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         self.user2 = User.objects.create_user(
             username="eventuser2",
             email="event2@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         login_response = self.client.post(
             "/api/auth/login/",
-            {"email": "event@example.com", "password": "password123"}
+            {"email": "event@example.com", "password": "securePass-2026x"}
         )
         self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
@@ -904,16 +1028,16 @@ class SearchAndFilterTests(TestCase):
         self.user = User.objects.create_user(
             username="searchuser",
             email="search@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         self.user2 = User.objects.create_user(
             username="searchuser2",
             email="search2@example.com",
-            password="password123"
+            password="securePass-2026x"
         )
         login_response = self.client.post(
             "/api/auth/login/",
-            {"email": "search@example.com", "password": "password123"}
+            {"email": "search@example.com", "password": "securePass-2026x"}
         )
         self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
@@ -1044,11 +1168,11 @@ class DeleteAccountTests(TestCase):
         self.user_data = {
             "username": "deleteuser",
             "email": "delete@example.com",
-            "password": "password123"
+            "password": "securePass-2026x"
         }
-        # Register and login
-        response = self.client.post(self.register_url, self.user_data)
-        self.token = response.data["token"]
+        # Register, verify the emailed link, and login
+        login_response = register_and_activate(self.client, self.user_data)
+        self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
         self.user = User.objects.get(email="delete@example.com")
         
@@ -1069,7 +1193,7 @@ class DeleteAccountTests(TestCase):
         
     def test_delete_account_success(self):
         """Test successful account deletion with correct password."""
-        data = {"password": "password123"}
+        data = {"password": "securePass-2026x"}
         response = self.client.delete("/api/user/account/", data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("deleted", response.data.get("message", "").lower())
@@ -1117,7 +1241,7 @@ class DeleteAccountTests(TestCase):
         """Test unauthenticated user cannot delete account."""
         # Clear credentials
         self.client.credentials()
-        data = {"password": "password123"}
+        data = {"password": "securePass-2026x"}
         response = self.client.delete("/api/user/account/", data, format='json')
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         
@@ -1129,10 +1253,10 @@ class DeleteAccountTests(TestCase):
         user2_data = {
             "username": "user2",
             "email": "user2@example.com",
-            "password": "password456"
+            "password": "securePass-777y"
         }
-        response = client2.post(self.register_url, user2_data)
-        user2_token = response.data["token"]
+        user2_login = register_and_activate(client2, user2_data)
+        user2_token = user2_login.data["token"]
         client2.credentials(HTTP_AUTHORIZATION=f'Token {user2_token}')
         user2 = User.objects.get(email="user2@example.com")
         
@@ -1152,7 +1276,7 @@ class DeleteAccountTests(TestCase):
         )
         
         # Delete first user using original client
-        data = {"password": "password123"}
+        data = {"password": "securePass-2026x"}
         response = self.client.delete("/api/user/account/", data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
@@ -1163,3 +1287,589 @@ class DeleteAccountTests(TestCase):
         self.assertEqual(Task.objects.filter(user=user2).count(), 1)
         self.assertEqual(Note.objects.filter(user=user2).count(), 1)
         self.assertEqual(CalendarEvent.objects.filter(user=user2).count(), 1)
+
+
+class NotificationTests(TestCase):
+    """Test notification persistence and deduplication."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="notifyuser",
+            email="notify@example.com",
+            password="securePass-2026x"
+        )
+        self.user2 = User.objects.create_user(
+            username="notifyuser2",
+            email="notify2@example.com",
+            password="securePass-2026x"
+        )
+        login_response = self.client.post(
+            "/api/auth/login/",
+            {"email": "notify@example.com", "password": "securePass-2026x"}
+        )
+        self.token = login_response.data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
+        self.notifications_url = "/api/notifications/"
+
+    def test_create_notification(self):
+        """Test creating a notification persists it."""
+        data = {
+            "message": "Hi, John You Finished This Task: Finish my project.",
+            "dedup_key": "task-completed:abc:2026-08-20T10:00:00Z"
+        }
+        response = self.client.post(self.notifications_url, data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["message"], data["message"])
+        self.assertEqual(response.data["read"], False)
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
+
+    def test_duplicate_dedup_key_does_not_create_second_notification(self):
+        """Test re-submitting the same dedup_key returns the stored notification."""
+        data = {
+            "message": "Tomorrow at 12:00 PM: Finish my project. Don't forget!",
+            "dedup_key": "day-before:event:abc:2026-08-21"
+        }
+        first = self.client.post(self.notifications_url, data)
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+
+        second = self.client.post(self.notifications_url, data)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(first.data["id"], second.data["id"])
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
+
+    def test_same_dedup_key_allowed_for_different_users(self):
+        """Test dedup_key uniqueness is scoped per user."""
+        Notification.objects.create(
+            user=self.user2,
+            message="Other user notification",
+            dedup_key="due-time:task:abc:2026-08-20"
+        )
+        data = {
+            "message": "It's time for: Finish my project. Don't forget!",
+            "dedup_key": "due-time:task:abc:2026-08-20"
+        }
+        response = self.client.post(self.notifications_url, data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Notification.objects.count(), 2)
+
+    def test_list_notifications_only_own(self):
+        """Test users only see their own notifications."""
+        Notification.objects.create(
+            user=self.user, message="Own notification", dedup_key="k1"
+        )
+        Notification.objects.create(
+            user=self.user2, message="Other notification", dedup_key="k2"
+        )
+        response = self.client.get(self.notifications_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["message"], "Own notification")
+
+    def test_cannot_delete_other_user_notification(self):
+        """Test user cannot delete another user's notification."""
+        other = Notification.objects.create(
+            user=self.user2, message="Other notification", dedup_key="k3"
+        )
+        response = self.client.delete(f"/api/notifications/{other.id}/")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(Notification.objects.filter(id=other.id).count(), 1)
+
+    def test_notification_requires_auth(self):
+        """Test unauthenticated requests are rejected."""
+        self.client.credentials()
+        response = self.client.get(self.notifications_url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_new_user_notification_settings_default_on(self):
+        """Test both notification settings default to ON for new users."""
+        client = APIClient()
+        response = client.post(
+            "/api/auth/register/",
+            {
+                "username": "defaults@example.com",
+                "email": "defaults@example.com",
+                "password": "securePass-2026x",
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["user"]["push_notifications"], True)
+        self.assertEqual(response.data["user"]["task_reminders"], True)
+
+    def test_clear_notifications_deletes_all_own(self):
+        """Test clearing removes every notification belonging to the user."""
+        Notification.objects.create(user=self.user, message="One", dedup_key="clear-1")
+        Notification.objects.create(user=self.user, message="Two", dedup_key="clear-2")
+        response = self.client.delete("/api/notifications/clear/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["deleted"], 2)
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
+
+    def test_clear_notifications_keeps_other_users(self):
+        """Test clearing only affects the requesting user's notifications."""
+        Notification.objects.create(user=self.user, message="Own", dedup_key="clear-3")
+        Notification.objects.create(user=self.user2, message="Other", dedup_key="clear-4")
+        response = self.client.delete("/api/notifications/clear/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(Notification.objects.filter(user=self.user2).count(), 1)
+
+    def test_clear_notifications_requires_auth(self):
+        """Test unauthenticated clear is rejected."""
+        Notification.objects.create(user=self.user, message="Own", dedup_key="clear-5")
+        self.client.credentials()
+        response = self.client.delete("/api/notifications/clear/")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
+
+    def test_mark_notification_read(self):
+        """Test PATCH marks a notification as read."""
+        notification = Notification.objects.create(
+            user=self.user, message="Unread", dedup_key="read-1"
+        )
+        response = self.client.patch(
+            f"/api/notifications/{notification.id}/",
+            {"read": True},
+            format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["read"], True)
+        notification.refresh_from_db()
+        self.assertTrue(notification.read)
+
+    def test_cannot_mark_other_user_notification_read(self):
+        """Test users cannot mark another user's notification as read."""
+        other = Notification.objects.create(
+            user=self.user2, message="Other notification", dedup_key="read-2"
+        )
+        response = self.client.patch(
+            f"/api/notifications/{other.id}/",
+            {"read": True},
+            format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        other.refresh_from_db()
+        self.assertFalse(other.read)
+
+    def test_mark_all_read_marks_own_unread_notifications(self):
+        """Test the bulk endpoint marks only the requester's unread items."""
+        Notification.objects.create(user=self.user, message="One", dedup_key="mar-1")
+        Notification.objects.create(user=self.user, message="Two", dedup_key="mar-2")
+        Notification.objects.create(
+            user=self.user, message="Already read", dedup_key="mar-3", read=True
+        )
+        Notification.objects.create(user=self.user2, message="Other", dedup_key="mar-4")
+
+        response = self.client.post("/api/notifications/mark_all_read/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["updated"], 2)
+        self.assertEqual(
+            Notification.objects.filter(user=self.user, read=False).count(), 0
+        )
+        # The other user's notification is untouched.
+        self.assertFalse(Notification.objects.get(dedup_key="mar-4").read)
+
+    def test_mark_all_read_requires_auth(self):
+        """Test unauthenticated bulk mark-read is rejected."""
+        Notification.objects.create(user=self.user, message="One", dedup_key="mar-5")
+        self.client.credentials()
+        response = self.client.post("/api/notifications/mark_all_read/")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertFalse(Notification.objects.get(dedup_key="mar-5").read)
+
+    def test_create_notification_broadcasts_over_websocket(self):
+        """Test creating a notification pushes it to the user's WS group."""
+        with mock.patch("api.views.channel_layer") as mock_layer:
+            mock_layer.group_send = mock.AsyncMock()
+            data = {"message": "Broadcast me", "dedup_key": "ws-broadcast-1"}
+            response = self.client.post(self.notifications_url, data)
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+            mock_layer.group_send.assert_awaited_once()
+            group, payload = mock_layer.group_send.call_args.args
+            self.assertEqual(group, f"user_{self.user.id}_notifications")
+            self.assertEqual(payload["type"], "send_notification")
+            self.assertEqual(payload["data"]["type"], "notification_created")
+            self.assertEqual(payload["data"]["object"]["message"], "Broadcast me")
+            self.assertEqual(payload["data"]["object"]["read"], False)
+
+    def test_duplicate_dedup_key_does_not_broadcast_again(self):
+        """Test an idempotent re-POST returns the stored item without a broadcast."""
+        data = {"message": "Once only", "dedup_key": "ws-broadcast-2"}
+        self.client.post(self.notifications_url, data)
+
+        with mock.patch("api.views.channel_layer") as mock_layer:
+            mock_layer.group_send = mock.AsyncMock()
+            response = self.client.post(self.notifications_url, data)
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            mock_layer.group_send.assert_not_awaited()
+
+
+class WebSocketTests(TestCase):
+    """Test the real-time notification WebSocket endpoint.
+
+    Every connection passes a valid Origin header so the tests exercise
+    ticket authentication instead of being rejected up front by
+    AllowedHostsOriginValidator (which closes connections with no Origin).
+    """
+
+    ORIGIN_HEADERS = [(b"origin", b"http://localhost")]
+
+    async def test_anonymous_connection_is_rejected(self):
+        """Test connections without a ticket are closed."""
+        communicator = WebsocketCommunicator(
+            application, "/ws/notifications/", headers=self.ORIGIN_HEADERS
+        )
+        connected, _ = await communicator.connect()
+        self.assertFalse(connected)
+        await communicator.disconnect()
+
+    async def test_invalid_ticket_connection_is_rejected(self):
+        """Test connections with a garbage ticket are closed."""
+        communicator = WebsocketCommunicator(
+            application, "/ws/notifications/?ticket=not-a-real-ticket",
+            headers=self.ORIGIN_HEADERS,
+        )
+        connected, _ = await communicator.connect()
+        self.assertFalse(connected)
+        await communicator.disconnect()
+
+    async def test_raw_api_token_in_query_string_is_rejected(self):
+        """Test the legacy ?token= path no longer authenticates the socket.
+
+        Long-lived tokens must not be usable in the WebSocket URL because
+        query strings leak into server/proxy logs.
+        """
+        user = await database_sync_to_async(User.objects.create_user)(
+            username="tokenuser", email="token@example.com", password="securePass-2026x"
+        )
+        token = await database_sync_to_async(Token.objects.create)(user=user)
+        communicator = WebsocketCommunicator(
+            application, f"/ws/notifications/?token={token.key}",
+            headers=self.ORIGIN_HEADERS,
+        )
+        connected, _ = await communicator.connect()
+        self.assertFalse(connected)
+        await communicator.disconnect()
+
+    async def test_valid_ticket_connects_and_receives_broadcast(self):
+        """Test ticket-authenticated connections join the user's group."""
+        from api.middleware import generate_ws_ticket
+
+        user = await database_sync_to_async(User.objects.create_user)(
+            username="wsuser", email="ws@example.com", password="securePass-2026x"
+        )
+        ticket = await database_sync_to_async(generate_ws_ticket)(user)
+
+        communicator = WebsocketCommunicator(
+            application, f"/ws/notifications/?ticket={ticket}",
+            headers=self.ORIGIN_HEADERS,
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+
+        welcome = await communicator.receive_json_from()
+        self.assertEqual(welcome["type"], "connection_established")
+
+        channel_layer = get_channel_layer()
+        await channel_layer.group_send(
+            f"user_{user.id}_notifications",
+            {
+                "type": "send_notification",
+                "data": {"message": "List created", "type": "list_created"},
+            },
+        )
+        message = await communicator.receive_json_from()
+        self.assertEqual(message["type"], "notification")
+        self.assertEqual(message["data"]["message"], "List created")
+
+        await communicator.disconnect()
+
+
+class HealthCheckTests(TestCase):
+    """Test the unauthenticated health-check endpoint."""
+
+    def test_health_check_returns_ok(self):
+        """Test the health endpoint returns 200 and reports a reachable DB."""
+        response = self.client.get("/api/health/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertTrue(body["database"])
+
+    def test_health_check_requires_no_authentication(self):
+        """Test the health endpoint is reachable without credentials."""
+        # No credentials are set on the client.
+        response = self.client.get("/api/health/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_health_check_rejects_non_get(self):
+        """Test non-GET methods are rejected with 405."""
+        response = self.client.post("/api/health/")
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+
+class TaskCompletionSignalTests(TestCase):
+    """Test server-side completion notification generation via signals."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="signaluser",
+            email="signal@example.com",
+            password="securePass-2026x",
+            first_name="Signal",
+            last_name="User",
+        )
+        login_response = self.client.post(
+            "/api/auth/login/",
+            {"email": "signal@example.com", "password": "securePass-2026x"}
+        )
+        self.token = login_response.data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
+
+    def test_completing_task_creates_notification(self):
+        """Test toggling a task to completed creates a notification."""
+        task = Task.objects.create(user=self.user, title="My Task", completed=False)
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
+
+        response = self.client.post(f"/api/tasks/{task.id}/toggle/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["completed"])
+
+        notifications = Notification.objects.filter(user=self.user)
+        self.assertEqual(notifications.count(), 1)
+        notification = notifications.first()
+        self.assertEqual(notification.dedup_key, f"task-completed:{task.id}")
+        self.assertEqual(
+            notification.message,
+            "Hi, Signal User You Finished This Task: My Task."
+        )
+
+    def test_uncompleting_task_does_not_create_notification(self):
+        """Test toggling a completed task back to open creates nothing."""
+        task = Task.objects.create(user=self.user, title="My Task", completed=True)
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
+
+        response = self.client.post(f"/api/tasks/{task.id}/toggle/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["completed"])
+
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
+
+    def test_recompleting_task_does_not_duplicate_notification(self):
+        """Test complete -> un-complete -> re-complete yields one notification."""
+        task = Task.objects.create(user=self.user, title="My Task", completed=False)
+
+        self.client.post(f"/api/tasks/{task.id}/toggle/")  # complete
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
+
+        self.client.post(f"/api/tasks/{task.id}/toggle/")  # un-complete
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
+
+        self.client.post(f"/api/tasks/{task.id}/toggle/")  # re-complete
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
+
+    def test_no_notification_when_push_notifications_disabled(self):
+        """Test no notification is created when push notifications are off."""
+        self.user.push_notifications = False
+        self.user.save()
+        task = Task.objects.create(user=self.user, title="My Task", completed=False)
+
+        self.client.post(f"/api/tasks/{task.id}/toggle/")
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
+
+    def test_client_post_with_same_dedup_key_returns_server_notification(self):
+        """Test the client and server dedup keys agree, preventing duplicates."""
+        task = Task.objects.create(user=self.user, title="My Task", completed=False)
+        self.client.post(f"/api/tasks/{task.id}/toggle/")
+        server_notification = Notification.objects.get(user=self.user)
+
+        response = self.client.post(
+            "/api/notifications/",
+            {
+                "message": "Hi, Signal User You Finished This Task: My Task.",
+                "dedup_key": f"task-completed:{task.id}"
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], str(server_notification.id))
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
+
+    def test_completing_task_broadcasts_notification_over_websocket(self):
+        """Test the server-generated completion notification reaches the WS group."""
+        task = Task.objects.create(user=self.user, title="My Task", completed=False)
+
+        with mock.patch("api.signals.get_channel_layer") as mock_get:
+            mock_layer = mock.Mock()
+            mock_layer.group_send = mock.AsyncMock()
+            mock_get.return_value = mock_layer
+
+            response = self.client.post(f"/api/tasks/{task.id}/toggle/")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+            mock_layer.group_send.assert_awaited_once()
+            group, payload = mock_layer.group_send.call_args.args
+            self.assertEqual(group, f"user_{self.user.id}_notifications")
+            self.assertEqual(payload["data"]["type"], "notification_created")
+            self.assertEqual(
+                payload["data"]["object"]["dedup_key"],
+                f"task-completed:{task.id}"
+            )
+
+    def test_recompleting_task_does_not_broadcast_again(self):
+        """Test no broadcast fires when the notification already exists."""
+        task = Task.objects.create(user=self.user, title="My Task", completed=False)
+        self.client.post(f"/api/tasks/{task.id}/toggle/")  # complete
+        self.client.post(f"/api/tasks/{task.id}/toggle/")  # un-complete
+
+        with mock.patch("api.signals.get_channel_layer") as mock_get:
+            mock_layer = mock.Mock()
+            mock_layer.group_send = mock.AsyncMock()
+            mock_get.return_value = mock_layer
+
+            self.client.post(f"/api/tasks/{task.id}/toggle/")  # re-complete
+            mock_layer.group_send.assert_not_awaited()
+
+
+class UserRouteRestrictionTests(TestCase):
+    """Test UserViewSet exposes only its custom actions.
+
+    A full ModelViewSet routed DELETE /api/user/{id}/ (account deletion with
+    no password check) and POST /api/user/ (a broken create); those default
+    routes must not exist.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="routeuser",
+            email="route@example.com",
+            password="securePass-2026x",
+        )
+        self.attacker = User.objects.create_user(
+            username="attacker",
+            email="attacker@example.com",
+            password="securePass-2026x",
+        )
+        token = Token.objects.create(user=self.attacker)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+
+    def test_delete_user_by_id_is_not_routed(self):
+        """Test a stolen token cannot wipe an account via DELETE /api/user/{id}/."""
+        response = self.client.delete(f"/api/user/{self.user.id}/")
+        self.assertIn(response.status_code, (
+            status.HTTP_404_NOT_FOUND, status.HTTP_405_METHOD_NOT_ALLOWED
+        ))
+        self.assertTrue(User.objects.filter(id=self.user.id).exists())
+
+    def test_create_user_is_not_routed(self):
+        """Test POST /api/user/ no longer exists."""
+        response = self.client.post(
+            "/api/user/",
+            {"username": "sneaky", "email": "sneaky@example.com"},
+        )
+        self.assertIn(response.status_code, (
+            status.HTTP_404_NOT_FOUND, status.HTTP_405_METHOD_NOT_ALLOWED
+        ))
+        self.assertFalse(User.objects.filter(username="sneaky").exists())
+
+    def test_list_users_is_not_routed(self):
+        """Test GET /api/user/ does not enumerate users."""
+        response = self.client.get("/api/user/")
+        self.assertIn(response.status_code, (
+            status.HTTP_404_NOT_FOUND, status.HTTP_405_METHOD_NOT_ALLOWED
+        ))
+
+    def test_retrieve_user_by_id_is_not_routed(self):
+        """Test GET /api/user/{id}/ does not leak profiles."""
+        response = self.client.get(f"/api/user/{self.user.id}/")
+        self.assertIn(response.status_code, (
+            status.HTTP_404_NOT_FOUND, status.HTTP_405_METHOD_NOT_ALLOWED
+        ))
+
+
+class TokenSecurityTests(TestCase):
+    """Test API token expiry and WebSocket ticket issuance."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="tokenuser2",
+            email="token2@example.com",
+            password="securePass-2026x",
+        )
+
+    def test_expired_token_is_rejected(self):
+        """Test tokens older than TOKEN_EXPIRY_DAYS no longer authenticate."""
+        from datetime import timedelta
+        from django.utils import timezone
+        from django.conf import settings
+
+        token = Token.objects.create(user=self.user)
+        # Age the token beyond the expiry window.
+        Token.objects.filter(pk=token.pk).update(
+            created=timezone.now() - timedelta(days=settings.TOKEN_EXPIRY_DAYS + 1)
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        response = self.client.get("/api/user/me/")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_fresh_token_is_accepted(self):
+        """Test a token inside the expiry window still works."""
+        token = Token.objects.create(user=self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        response = self.client.get("/api/user/me/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_login_rotates_token(self):
+        """Test each login issues a fresh token and invalidates the old one.
+
+        Rotation means a stolen token stops working as soon as the real
+        owner signs in again.
+        """
+        login_data = {"email": "token2@example.com", "password": "securePass-2026x"}
+        first = self.client.post("/api/auth/login/", login_data)
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        first_token = first.data["token"]
+
+        second = self.client.post("/api/auth/login/", login_data)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        second_token = second.data["token"]
+        self.assertNotEqual(first_token, second_token)
+
+        # The rotated-out token must no longer authenticate.
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {first_token}')
+        response = self.client.get("/api/user/me/")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # The fresh token works.
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {second_token}')
+        response = self.client.get("/api/user/me/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_ws_ticket_requires_authentication(self):
+        """Test the ticket endpoint rejects anonymous callers."""
+        response = self.client.post("/api/auth/ws_ticket/")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_ws_ticket_is_short_lived_and_valid(self):
+        """Test the issued ticket authenticates a socket but expires quickly."""
+        from django.core import signing
+        from api.middleware import WS_TICKET_SALT
+
+        token = Token.objects.create(user=self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        response = self.client.post("/api/auth/ws_ticket/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ticket = response.data["ticket"]
+        # The long-lived API token must not appear in the ticket.
+        self.assertNotIn(token.key, ticket)
+
+        payload = signing.loads(ticket, salt=WS_TICKET_SALT, max_age=60)
+        self.assertEqual(payload["user_id"], str(self.user.id))
+
+        # The same ticket is rejected once it is older than the max age.
+        with self.assertRaises(signing.BadSignature):
+            signing.loads(ticket, salt=WS_TICKET_SALT, max_age=0)
+

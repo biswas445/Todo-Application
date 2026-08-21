@@ -10,7 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import os
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,22 +22,51 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
+# Security settings are driven by environment variables. With DEBUG off the
+# process refuses to start unless a real secret key and an explicit host
+# allowlist are provided, so a misconfigured deployment fails loudly instead
+# of silently running insecure defaults.
+DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('1', 'true', 'yes', 'on')
+
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-5^8kpaxnm2n@j2a+zgm1rtwp!fful)or*q1+d*0(mdtg_jv!&@'
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        # Dev-only fallback; never used when DJANGO_DEBUG is False.
+        SECRET_KEY = 'django-insecure-5^8kpaxnm2n@j2a+zgm1rtwp!fful)or*q1+d*0(mdtg_jv!&@'
+    else:
+        raise ImproperlyConfigured(
+            'DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is False.'
+        )
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# SECURITY WARNING: with DEBUG off there is no wildcard fallback.
+_allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS')
+if _allowed_hosts_env:
+    ALLOWED_HOSTS = [
+        host.strip() for host in _allowed_hosts_env.split(',') if host.strip()
+    ]
+elif DEBUG:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+else:
+    raise ImproperlyConfigured(
+        'DJANGO_ALLOWED_HOSTS must be set when DJANGO_DEBUG is False.'
+    )
 
-ALLOWED_HOSTS = ['*']
-
-# CORS settings for React frontend
+# CORS settings for React frontend. Narrow this to the deployed frontend
+# origin(s) in production via DJANGO_CORS_ORIGINS.
 CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+_cors_origins_env = os.environ.get('DJANGO_CORS_ORIGINS')
+if _cors_origins_env:
+    CORS_ALLOWED_ORIGINS = [
+        origin.strip() for origin in _cors_origins_env.split(',') if origin.strip()
+    ]
+else:
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -52,6 +84,8 @@ CORS_ALLOW_HEADERS = [
 # Application definition
 
 INSTALLED_APPS = [
+    # Daphne must come first so its ASGI runserver serves WebSockets
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -135,7 +169,11 @@ TIME_ZONE = 'UTC'
 
 USE_I18N = True
 
-USE_TZ = False  # We handle timezone in the frontend; dates are stored as local YYYY-MM-DD
+# Calendar dates (due_date, event date) are DateFields and are unaffected by
+# USE_TZ; the frontend treats them as local YYYY-MM-DD strings. USE_TZ=True
+# ensures DateTimeFields (created_at/updated_at) are stored as timezone-aware
+# UTC values rather than naive datetimes.
+USE_TZ = True
 
 
 # Static files (CSS, JavaScript, Images)
@@ -145,12 +183,75 @@ STATIC_URL = 'static/'
 
 
 # Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
+# https://docs.djangoproject.com/en/6.1/topics/email/
+# Console backend for development (verification emails are printed to the
+# server log). Point DJANGO_EMAIL_BACKEND at an SMTP backend in production.
+EMAIL_BACKEND = os.environ.get(
+    'DJANGO_EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend',
+)
+DEFAULT_FROM_EMAIL = os.environ.get(
+    'DJANGO_DEFAULT_FROM_EMAIL',
+    'Organic Mind <noreply@organicmind.local>',
+)
+
+# Auth hardening knobs
+# API tokens older than this many days are rejected (sign in again to get a
+# fresh one). WebSocket tickets are single-purpose and expire within seconds.
+TOKEN_EXPIRY_DAYS = int(os.environ.get('DJANGO_TOKEN_EXPIRY_DAYS', '30'))
+WS_TICKET_MAX_AGE = int(os.environ.get('DJANGO_WS_TICKET_MAX_AGE', '60'))
+EMAIL_VERIFICATION_MAX_AGE_SECONDS = int(
+    os.environ.get('DJANGO_EMAIL_VERIFICATION_MAX_AGE', str(3 * 24 * 3600))
+)
+
+
+# Logging
+# https://docs.djangoproject.com/en/6.1/topics/logging/
+# Console-based logging so container orchestrators and process managers can
+# capture output. Swap in file/syslog handlers for environments that need them.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.environ.get('DJANGO_LOG_LEVEL', 'INFO'),
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': os.environ.get('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'api': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
 
 # REST Framework configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+        # Tokens expire after TOKEN_EXPIRY_DAYS instead of living forever.
+        'api.authentication.ExpiringTokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
@@ -166,14 +267,23 @@ AUTH_USER_MODEL = 'api.User'
 # Channels configuration for WebSockets
 ASGI_APPLICATION = 'organic_mind_backend.asgi.application'
 
-# Channel layers configuration (using in-memory for development, Redis for production)
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
-        # For production with Redis:
-        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        # 'CONFIG': {
-        #     'hosts': [('localhost', 6379)],
-        # },
-    },
-}
+# Channel layers configuration. The in-memory backend only works within a
+# single process, so it is a development convenience. For production or
+# multi-instance deployments set REDIS_URL (e.g. redis://localhost:6379/0) so
+# every process shares a Redis-backed channel layer.
+REDIS_URL = os.environ.get('REDIS_URL')
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [REDIS_URL],
+            },
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }

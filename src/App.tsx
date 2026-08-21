@@ -1,6 +1,8 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { MoreHorizontal, CheckSquare } from 'lucide-react';
+import { CheckSquare, Check, AlertCircle, X } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
+import { useWebSocketNotifications } from '@/hooks/useWebSocketNotifications';
+import type { ApiTask, ApiNote, ApiEvent, ApiNotification } from '@/api';
 import AuthShell from '@/components/AuthShell';
 import Sidebar from '@/components/Sidebar';
 import { TaskRow, AddTask, TaskModal } from '@/components/TaskViews';
@@ -19,12 +21,13 @@ type AuthView = 'welcome' | 'signin' | 'signup';
 function TodayView({ store, lists, onOpen }: { store: ReturnType<typeof useAppStore>; lists: ListItem[]; onOpen: (id: EntityId) => void }) {
   const { data } = store;
   const today = todayStr();
-  const tasks = data.tasks.filter((t) => t.dueDate === today);
-  const incomplete = tasks.filter((t) => !t.completed);
-  
+  const tasks = data.tasks.filter((t) => t.dueDate === today && !t.completed);
+
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<EntityId>>(new Set());
-  
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const toggleSelection = (taskId: EntityId) => {
     setSelectedTaskIds(prev => {
       const next = new Set(prev);
@@ -33,25 +36,46 @@ function TodayView({ store, lists, onOpen }: { store: ReturnType<typeof useAppSt
       return next;
     });
   };
-  
-  const deleteSelected = () => {
-    selectedTaskIds.forEach(id => store.deleteTask(id));
+
+  const exitSelectionMode = () => {
     setSelectedTaskIds(new Set());
+    setConfirmingDelete(false);
     setIsSelectionMode(false);
   };
-  
+
+  const deleteSelected = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      // Await all deletes so failures surface before the selection is
+      // cleared; deleteTask reports per-item errors to the store.
+      await Promise.all(Array.from(selectedTaskIds).map((id) => store.deleteTask(id)));
+      exitSelectionMode();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="view-content">
       <div className="view-heading">
-        <div><h1>Today</h1><span className="count-badge">{incomplete.length}</span></div>
+        <div><h1>Today</h1><span className="count-badge">{tasks.length}</span></div>
         <div style={{ display: 'flex', gap: '8px' }}>
           {isSelectionMode ? (
-            <>
-              <button className="outline-button small-btn" onClick={() => { setIsSelectionMode(false); setSelectedTaskIds(new Set()); }}>Cancel</button>
-              {selectedTaskIds.size > 0 && (
-                <button className="danger-btn small-btn" onClick={deleteSelected}>Delete ({selectedTaskIds.size})</button>
-              )}
-            </>
+            confirmingDelete ? (
+              <>
+                <span style={{ fontSize: 13, alignSelf: 'center' }}>Delete {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? '' : 's'}?</span>
+                <button className="danger-btn small-btn" onClick={deleteSelected} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete'}</button>
+                <button className="outline-button small-btn" onClick={() => setConfirmingDelete(false)} disabled={isDeleting}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <button className="outline-button small-btn" onClick={exitSelectionMode}>Cancel</button>
+                {selectedTaskIds.size > 0 && (
+                  <button className="danger-btn small-btn" onClick={() => setConfirmingDelete(true)}>Delete ({selectedTaskIds.size})</button>
+                )}
+              </>
+            )
           ) : (
             <button className="more-button" aria-label="More options" onClick={() => setIsSelectionMode(true)}>
               <CheckSquare size={20} />
@@ -65,12 +89,14 @@ function TodayView({ store, lists, onOpen }: { store: ReturnType<typeof useAppSt
         {tasks.map((task) => (
           <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {isSelectionMode && (
-              <input
-                type="checkbox"
-                checked={selectedTaskIds.has(task.id)}
-                onChange={() => toggleSelection(task.id)}
-                style={{ marginRight: '8px' }}
-              />
+              <button
+                type="button"
+                className={`checkbox select-check ${selectedTaskIds.has(task.id) ? 'checked' : ''}`}
+                onClick={() => toggleSelection(task.id)}
+                aria-label={selectedTaskIds.has(task.id) ? 'Deselect task' : 'Select task'}
+              >
+                {selectedTaskIds.has(task.id) && <Check size={12} />}
+              </button>
             )}
             <TaskRow task={task} lists={lists} store={store} onOpen={onOpen} hideCheckbox={isSelectionMode} />
           </div>
@@ -86,125 +112,50 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
   const tomorrow = tomorrowStr();
   const weekEnd = dayOffsetStr(7);
 
-  const todayTasks = data.tasks.filter((t) => t.dueDate === today);
-  const tomorrowTasks = data.tasks.filter((t) => t.dueDate === tomorrow);
-  const weekTasks = data.tasks.filter((t) => t.dueDate && t.dueDate > tomorrow && t.dueDate <= weekEnd);
+  const todayTasks = data.tasks.filter((t) => t.dueDate === today && !t.completed);
+  const tomorrowTasks = data.tasks.filter((t) => t.dueDate === tomorrow && !t.completed);
+  const weekTasks = data.tasks.filter((t) => t.dueDate && t.dueDate > tomorrow && t.dueDate <= weekEnd && !t.completed);
   const total = data.tasks.filter((t) => t.dueDate && !t.completed).length;
 
   return (
     <div className="view-content upcoming-view">
-      <div className="view-heading"><div><h1>Upcoming</h1><span className="count-badge">{total}</span></div><button className="more-button" aria-label="More options"><MoreHorizontal size={20} /></button></div>
+      <div className="view-heading"><div><h1>Upcoming</h1><span className="count-badge">{total}</span></div></div>
       
       {/* Horizontal Grid Layout: Today | Tomorrow | This Week */}
-      <div className="upcoming-grid" style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-        gap: '24px',
-        width: '100%',
-        marginTop: '24px'
-      }}>
-        
+      <div className="upcoming-grid">
+
         {/* Today Section */}
-        <section className="task-card upcoming-section" style={{
-          background: '#ffffff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e5e7eb',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: '400px'
-        }}>
-          <div className="section-header" style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '16px',
-            paddingBottom: '12px',
-            borderBottom: '2px solid #f3f4f6'
-          }}>
-            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937', margin: 0 }}>Today</h2>
-            <span className="count-badge" style={{
-              background: '#eff6ff',
-              color: '#2563eb',
-              padding: '4px 12px',
-              borderRadius: '20px',
-              fontSize: '14px',
-              fontWeight: '600'
-            }}>{todayTasks.filter(t => !t.completed).length}</span>
+        <section className="task-card upcoming-section">
+          <div className="section-header">
+            <h2>Today</h2>
+            <span className="count-badge">{todayTasks.length}</span>
           </div>
           <AddTask store={store} defaultDueDate={today} />
-          <div className="task-card-list" style={{ flex: 1, marginTop: '16px' }}>
+          <div className="task-card-list">
             {todayTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for today.</p></div> : todayTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
           </div>
         </section>
 
         {/* Tomorrow Section */}
-        <section className="task-card upcoming-section" style={{
-          background: '#ffffff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e5e7eb',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: '400px'
-        }}>
-          <div className="section-header" style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '16px',
-            paddingBottom: '12px',
-            borderBottom: '2px solid #f3f4f6'
-          }}>
-            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937', margin: 0 }}>Tomorrow</h2>
-            <span className="count-badge" style={{
-              background: '#eff6ff',
-              color: '#2563eb',
-              padding: '4px 12px',
-              borderRadius: '20px',
-              fontSize: '14px',
-              fontWeight: '600'
-            }}>{tomorrowTasks.filter(t => !t.completed).length}</span>
+        <section className="task-card upcoming-section">
+          <div className="section-header">
+            <h2>Tomorrow</h2>
+            <span className="count-badge">{tomorrowTasks.length}</span>
           </div>
           <AddTask store={store} defaultDueDate={tomorrow} />
-          <div className="task-card-list" style={{ flex: 1, marginTop: '16px' }}>
+          <div className="task-card-list">
             {tomorrowTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for tomorrow.</p></div> : tomorrowTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
           </div>
         </section>
 
         {/* This Week Section */}
-        <section className="task-card upcoming-section" style={{
-          background: '#ffffff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e5e7eb',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: '400px'
-        }}>
-          <div className="section-header" style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '16px',
-            paddingBottom: '12px',
-            borderBottom: '2px solid #f3f4f6'
-          }}>
-            <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937', margin: 0 }}>This Week</h2>
-            <span className="count-badge" style={{
-              background: '#eff6ff',
-              color: '#2563eb',
-              padding: '4px 12px',
-              borderRadius: '20px',
-              fontSize: '14px',
-              fontWeight: '600'
-            }}>{weekTasks.filter(t => !t.completed).length}</span>
+        <section className="task-card upcoming-section">
+          <div className="section-header">
+            <h2>This Week</h2>
+            <span className="count-badge">{weekTasks.length}</span>
           </div>
           <AddTask store={store} defaultDueDate={weekEnd} />
-          <div className="task-card-list" style={{ flex: 1, marginTop: '16px' }}>
+          <div className="task-card-list">
             {weekTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for this week.</p></div> : weekTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
           </div>
         </section>
@@ -214,7 +165,24 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
   );
 }
 
-function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppStore>; listId: EntityId; onOpen: (id: EntityId) => void }) {
+function CompleteTasksView({ store, lists, onOpen }: { store: ReturnType<typeof useAppStore>; lists: ListItem[]; onOpen: (id: EntityId) => void }) {
+  const { data } = store;
+  const completedTasks = data.tasks.filter((t) => t.completed);
+
+  return (
+    <div className="view-content">
+      <div className="view-heading">
+        <div><h1>Complete Tasks</h1><span className="count-badge">{completedTasks.length}</span></div>
+      </div>
+      <div className="today-list">
+        {completedTasks.length === 0 && <div className="empty-state"><p>No completed tasks yet. Check off a task and it will appear here.</p></div>}
+        {completedTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
+      </div>
+    </div>
+  );
+}
+
+function ListView({ store, listId, onOpen, onGoHome }: { store: ReturnType<typeof useAppStore>; listId: EntityId; onOpen: (id: EntityId) => void; onGoHome: () => void }) {
   const { data } = store;
   const list = data.lists.find((l) => l.id === listId);
   const tasks = data.tasks.filter((t) => t.listId === listId);
@@ -222,9 +190,11 @@ function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppSt
   
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<EntityId>>(new Set());
-  
-  if (!list) return <NotFound />;
-  
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  if (!list) return <NotFound onGoHome={onGoHome} />;
+
   const toggleSelection = (taskId: EntityId) => {
     setSelectedTaskIds(prev => {
       const next = new Set(prev);
@@ -233,25 +203,44 @@ function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppSt
       return next;
     });
   };
-  
-  const deleteSelected = () => {
-    selectedTaskIds.forEach(id => store.deleteTask(id));
+
+  const exitSelectionMode = () => {
     setSelectedTaskIds(new Set());
+    setConfirmingDelete(false);
     setIsSelectionMode(false);
   };
-  
+
+  const deleteSelected = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await Promise.all(Array.from(selectedTaskIds).map((id) => store.deleteTask(id)));
+      exitSelectionMode();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="view-content">
       <div className="view-heading">
         <div><h1>{list.label}</h1><span className="count-badge">{incomplete.length}</span></div>
         <div style={{ display: 'flex', gap: '8px' }}>
           {isSelectionMode ? (
-            <>
-              <button className="outline-button small-btn" onClick={() => { setIsSelectionMode(false); setSelectedTaskIds(new Set()); }}>Cancel</button>
-              {selectedTaskIds.size > 0 && (
-                <button className="danger-btn small-btn" onClick={deleteSelected}>Delete ({selectedTaskIds.size})</button>
-              )}
-            </>
+            confirmingDelete ? (
+              <>
+                <span style={{ fontSize: 13, alignSelf: 'center' }}>Delete {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? '' : 's'}?</span>
+                <button className="danger-btn small-btn" onClick={deleteSelected} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete'}</button>
+                <button className="outline-button small-btn" onClick={() => setConfirmingDelete(false)} disabled={isDeleting}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <button className="outline-button small-btn" onClick={exitSelectionMode}>Cancel</button>
+                {selectedTaskIds.size > 0 && (
+                  <button className="danger-btn small-btn" onClick={() => setConfirmingDelete(true)}>Delete ({selectedTaskIds.size})</button>
+                )}
+              </>
+            )
           ) : (
             <button className="more-button" aria-label="More options" onClick={() => setIsSelectionMode(true)}>
               <CheckSquare size={20} />
@@ -265,12 +254,14 @@ function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppSt
         {tasks.map((task) => (
           <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {isSelectionMode && (
-              <input
-                type="checkbox"
-                checked={selectedTaskIds.has(task.id)}
-                onChange={() => toggleSelection(task.id)}
-                style={{ marginRight: '8px' }}
-              />
+              <button
+                type="button"
+                className={`checkbox select-check ${selectedTaskIds.has(task.id) ? 'checked' : ''}`}
+                onClick={() => toggleSelection(task.id)}
+                aria-label={selectedTaskIds.has(task.id) ? 'Deselect task' : 'Select task'}
+              >
+                {selectedTaskIds.has(task.id) && <Check size={12} />}
+              </button>
             )}
             <TaskRow task={task} lists={data.lists} store={store} onOpen={onOpen} hideCheckbox={isSelectionMode} />
           </div>
@@ -280,7 +271,7 @@ function ListView({ store, listId, onOpen }: { store: ReturnType<typeof useAppSt
   );
 }
 
-function TagView({ store, tagId, onOpen }: { store: ReturnType<typeof useAppStore>; tagId: EntityId; onOpen: (id: EntityId) => void }) {
+function TagView({ store, tagId, onOpen, onGoHome }: { store: ReturnType<typeof useAppStore>; tagId: EntityId; onOpen: (id: EntityId) => void; onGoHome: () => void }) {
   const { data } = store;
   const tag = data.tags.find((t) => t.id === tagId);
   const tasks = data.tasks.filter((t) => t.tagIds.includes(tagId));
@@ -288,9 +279,11 @@ function TagView({ store, tagId, onOpen }: { store: ReturnType<typeof useAppStor
   
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<EntityId>>(new Set());
-  
-  if (!tag) return <NotFound />;
-  
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  if (!tag) return <NotFound onGoHome={onGoHome} />;
+
   const toggleSelection = (taskId: EntityId) => {
     setSelectedTaskIds(prev => {
       const next = new Set(prev);
@@ -299,25 +292,44 @@ function TagView({ store, tagId, onOpen }: { store: ReturnType<typeof useAppStor
       return next;
     });
   };
-  
-  const deleteSelected = () => {
-    selectedTaskIds.forEach(id => store.deleteTask(id));
+
+  const exitSelectionMode = () => {
     setSelectedTaskIds(new Set());
+    setConfirmingDelete(false);
     setIsSelectionMode(false);
   };
-  
+
+  const deleteSelected = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await Promise.all(Array.from(selectedTaskIds).map((id) => store.deleteTask(id)));
+      exitSelectionMode();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="view-content">
       <div className="view-heading">
         <div><h1>{tag.label}</h1><span className="count-badge">{incomplete.length}</span></div>
         <div style={{ display: 'flex', gap: '8px' }}>
           {isSelectionMode ? (
-            <>
-              <button className="outline-button small-btn" onClick={() => { setIsSelectionMode(false); setSelectedTaskIds(new Set()); }}>Cancel</button>
-              {selectedTaskIds.size > 0 && (
-                <button className="danger-btn small-btn" onClick={deleteSelected}>Delete ({selectedTaskIds.size})</button>
-              )}
-            </>
+            confirmingDelete ? (
+              <>
+                <span style={{ fontSize: 13, alignSelf: 'center' }}>Delete {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? '' : 's'}?</span>
+                <button className="danger-btn small-btn" onClick={deleteSelected} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete'}</button>
+                <button className="outline-button small-btn" onClick={() => setConfirmingDelete(false)} disabled={isDeleting}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <button className="outline-button small-btn" onClick={exitSelectionMode}>Cancel</button>
+                {selectedTaskIds.size > 0 && (
+                  <button className="danger-btn small-btn" onClick={() => setConfirmingDelete(true)}>Delete ({selectedTaskIds.size})</button>
+                )}
+              </>
+            )
           ) : (
             <button className="more-button" aria-label="More options" onClick={() => setIsSelectionMode(true)}>
               <CheckSquare size={20} />
@@ -331,12 +343,14 @@ function TagView({ store, tagId, onOpen }: { store: ReturnType<typeof useAppStor
         {tasks.map((task) => (
           <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {isSelectionMode && (
-              <input
-                type="checkbox"
-                checked={selectedTaskIds.has(task.id)}
-                onChange={() => toggleSelection(task.id)}
-                style={{ marginRight: '8px' }}
-              />
+              <button
+                type="button"
+                className={`checkbox select-check ${selectedTaskIds.has(task.id) ? 'checked' : ''}`}
+                onClick={() => toggleSelection(task.id)}
+                aria-label={selectedTaskIds.has(task.id) ? 'Deselect task' : 'Select task'}
+              >
+                {selectedTaskIds.has(task.id) && <Check size={12} />}
+              </button>
             )}
             <TaskRow task={task} lists={data.lists} store={store} onOpen={onOpen} hideCheckbox={isSelectionMode} />
           </div>
@@ -351,6 +365,45 @@ function Workspace({ store }: { store: ReturnType<typeof useAppStore> }) {
   const [selectedTaskId, setSelectedTaskId] = useState<EntityId | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Real-time sync: apply changes broadcast by the backend over WebSocket.
+  // Object payloads are upserted directly; list/tag mutations and note/event
+  // updates/deletes (which carry no payload) trigger a collection refresh.
+  useWebSocketNotifications({
+    onTaskCreated: (task) => { if (task) store.applyExternalTask(task as ApiTask); },
+    onTaskUpdated: (task) => { if (task) store.applyExternalTask(task as ApiTask); },
+    onTaskDeleted: (data) => {
+      const id = (data as { object?: { id?: EntityId } } | undefined)?.object?.id;
+      if (id) store.removeExternalTask(id);
+    },
+    onNoteCreated: (note) => { if (note) store.applyExternalNote(note as ApiNote); },
+    onEventCreated: (event) => { if (event) store.applyExternalEvent(event as ApiEvent); },
+    onNotification: (data) => {
+      switch (data?.type) {
+        case 'list_created':
+        case 'list_deleted':
+          store.refreshCollection('lists');
+          break;
+        case 'tag_created':
+        case 'tag_deleted':
+          store.refreshCollection('tags');
+          break;
+        case 'note_updated':
+        case 'note_deleted':
+          store.refreshCollection('notes');
+          break;
+        case 'event_updated':
+        case 'event_deleted':
+          store.refreshCollection('events');
+          break;
+        case 'notification_created': {
+          const notification = (data as { object?: ApiNotification }).object;
+          if (notification) store.applyExternalNotification(notification);
+          break;
+        }
+      }
+    },
+  });
 
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
@@ -396,12 +449,13 @@ function Workspace({ store }: { store: ReturnType<typeof useAppStore> }) {
     if (page === 'Calendar') return <CalendarView store={store} onOpenTask={openTask} />;
     if (page === 'Sticky Wall') return <StickyWallView store={store} />;
     if (page === 'Notifications') return <NotificationsView store={store} />;
+    if (page === 'Complete Tasks') return <CompleteTasksView store={store} lists={store.data.lists} onOpen={openTask} />;
     if (page === 'Settings') return <SettingsView store={store} />;
     if (page === 'Lists Management') return <ListsManagementView store={store} onPage={setPage} />;
     if (page === 'Tags Management') return <TagsManagementView store={store} onPage={setPage} />;
-    if (page.startsWith('list-')) { const id = page.slice(5); return <ListView store={store} listId={id} onOpen={openTask} />; }
-    if (page.startsWith('tag-')) { const id = page.slice(4); return <TagView store={store} tagId={id} onOpen={openTask} />; }
-    return <NotFound />;
+    if (page.startsWith('list-')) { const id = page.slice(5); return <ListView store={store} listId={id} onOpen={openTask} onGoHome={() => setPage('Today')} />; }
+    if (page.startsWith('tag-')) { const id = page.slice(4); return <TagView store={store} tagId={id} onOpen={openTask} onGoHome={() => setPage('Today')} />; }
+    return <NotFound onGoHome={() => setPage('Today')} />;
   };
 
   return (
@@ -415,9 +469,34 @@ function Workspace({ store }: { store: ReturnType<typeof useAppStore> }) {
   );
 }
 
+function ErrorToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  // Auto-dismiss so a stale banner does not linger, but keep a manual close so
+  // the user can clear it immediately.
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 6000);
+    return () => clearTimeout(timer);
+  }, [message, onDismiss]);
+
+  return (
+    <div className="error-toast" role="alert">
+      <AlertCircle size={16} />
+      <span className="error-toast-message">{message}</span>
+      <button type="button" className="error-toast-close" onClick={onDismiss} aria-label="Dismiss error">
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
 function App() {
   const store = useAppStore();
   const [authView, setAuthView] = useState<AuthView>('welcome');
+
+  // Surface store-level errors (failed saves, expired session, load failures)
+  // as a global toast across both the auth and workspace screens.
+  const errorToast = store.error ? (
+    <ErrorToast message={store.error} onDismiss={store.clearError} />
+  ) : null;
 
   // Show loading state during initial auth check
   if (store.loading) {
@@ -435,8 +514,20 @@ function App() {
     );
   }
 
-  if (store.data.session) return <Workspace store={store} />;
-  return <AuthShell view={authView} onView={setAuthView} store={store} />;
+  if (store.data.session) {
+    return (
+      <>
+        {errorToast}
+        <Workspace store={store} />
+      </>
+    );
+  }
+  return (
+    <>
+      {errorToast}
+      <AuthShell view={authView} onView={setAuthView} store={store} />
+    </>
+  );
 }
 
 export default App;

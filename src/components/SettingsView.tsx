@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Bell, Globe, Lock, User, X, AlertTriangle } from 'lucide-react';
 import type { Store } from '@/store/useAppStore';
+import type { Settings as SettingsType } from '@/types';
 import { LIMITS } from '@/types';
 
 const ianaTimezones = [
@@ -51,11 +52,11 @@ function PasswordModal({ store, onClose }: { store: Store; onClose: () => void }
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (next !== confirm) { setError('New passwords do not match.'); return; }
-    const result = store.changePassword(current, next);
+    const result = await store.changePassword(current, next);
     if (!result.ok) { setError(result.error || 'Failed to change password.'); return; }
     setSuccess(true);
     setCurrent(''); setNext(''); setConfirm('');
@@ -85,17 +86,18 @@ function DeleteAccountModal({ store, onNavigateToSignup, onClose }: { store: Sto
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const result = store.deleteAccount(password);
-    setLoading(false);
+    const result = await store.deleteAccount(password);
     if (!result.ok) {
+      setLoading(false);
       setError(result.error || 'Failed to delete account.');
       return;
     }
-    // Account deleted successfully
+    // Account deleted successfully; the store cleared the session, so the
+    // app unmounts this modal and returns to the auth screen on its own.
     onNavigateToSignup();
   };
 
@@ -122,24 +124,33 @@ function DeleteAccountModal({ store, onNavigateToSignup, onClose }: { store: Sto
 }
 
 export function SettingsView({ store, onNavigateToSignup }: { store: Store; onNavigateToSignup?: () => void }) {
-  const { data, updateSettings, updateUser } = store;
+  const { data, updateSettings } = store;
   const s = data.settings;
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const initials = (data.user?.name ?? s.displayName).split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const bioWords = useMemo(() => countWords(s.bio), [s.bio]);
-  
+
   // Local state for pending changes (only sync to backend on explicit save)
   const [pendingBio, setPendingBio] = useState(s.bio);
   const [pendingTimezone, setPendingTimezone] = useState(s.timezone);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState(false);
 
   // Sync local state when data.settings changes from backend
   useEffect(() => {
     setPendingBio(s.bio);
     setPendingTimezone(s.timezone);
   }, [s.bio, s.timezone]);
+
+  // Keep the dropdown consistent with the stored value: if the profile holds a
+  // timezone outside the curated list, prepend it so the select never renders
+  // blank/mismatched against the actual setting.
+  const timezoneOptions = useMemo(
+    () => (ianaTimezones.includes(pendingTimezone) ? ianaTimezones : [pendingTimezone, ...ianaTimezones]),
+    [pendingTimezone]
+  );
 
   const handleBioChange = (v: string) => {
     const words = countWords(v);
@@ -153,34 +164,25 @@ export function SettingsView({ store, onNavigateToSignup }: { store: Store; onNa
   };
 
   const handleSaveChanges = async () => {
+    const updates: Partial<SettingsType> = {};
+    if (pendingBio !== s.bio) updates.bio = pendingBio;
+    if (pendingTimezone !== s.timezone) updates.timezone = pendingTimezone;
+    if (Object.keys(updates).length === 0) return;
+
     setIsSaving(true);
     setSaveSuccess(false);
-    
-    const updates: Partial<Settings> = {};
-    const userUpdates: Partial<User> = {};
-    
-    if (pendingBio !== s.bio) {
-      updates.bio = pendingBio;
-      userUpdates.bio = pendingBio;
-    }
-    if (pendingTimezone !== s.timezone) {
-      updates.timezone = pendingTimezone;
-      userUpdates.timezone = pendingTimezone;
-    }
-    
-    try {
-      if (Object.keys(updates).length > 0) {
-        await updateSettings(updates);
-        if (data.user && Object.keys(userUpdates).length > 0) {
-          await updateUser(userUpdates);
-        }
-        setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 2000);
-      }
-    } catch (err) {
-      console.error('Failed to save settings:', err);
-    } finally {
-      setIsSaving(false);
+    setSaveError(false);
+
+    // updateSettings maps these to the user profile and issues a single PATCH;
+    // it resolves false on failure so the status below is accurate instead of
+    // always reporting success.
+    const ok = await updateSettings(updates);
+    setIsSaving(false);
+    if (ok) {
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } else {
+      setSaveError(true);
     }
   };
 
@@ -201,13 +203,14 @@ export function SettingsView({ store, onNavigateToSignup }: { store: Store; onNa
           </div>
           <Field label="Username" value={data.user?.name ?? ''} readOnly hint="Username is permanent and cannot be changed." />
           <Field label="Email" value={s.email} readOnly hint="Email address is permanent and cannot be changed." />
-          <SelectField label="Timezone" value={pendingTimezone} options={ianaTimezones} onChange={handleTimezoneChange} />
+          <SelectField label="Timezone" value={pendingTimezone} options={timezoneOptions} onChange={handleTimezoneChange} />
           <label className="settings-field">
             <span>Bio</span>
             <textarea className="settings-bio" value={pendingBio} onChange={(e) => handleBioChange(e.target.value)} rows={3} />
             <em className="settings-hint">{bioWords} / {LIMITS.BIO_WORDS} words</em>
           </label>
           {saveSuccess && <p className="auth-success-inline" style={{marginTop: '8px'}}>✓ Settings saved successfully</p>}
+          {saveError && <p className="auth-error" style={{marginTop: '8px'}}>Could not save settings. Please try again.</p>}
           <button className="primary-button small-btn" onClick={handleSaveChanges} disabled={isSaving || (pendingBio === s.bio && pendingTimezone === s.timezone)}>
             {isSaving ? 'Saving...' : 'Save Changes'}
           </button>
@@ -215,14 +218,14 @@ export function SettingsView({ store, onNavigateToSignup }: { store: Store; onNa
 
         <Card icon={Globe} title="Preferences">
           <Field label="Language" value="English (US)" readOnly />
-          <SelectField label="Date format" value={s.dateFormat} options={['DD-MM-YY', 'MM/DD/YYYY', 'YYYY-MM-DD']} onChange={() => {}} />
-          <SelectField label="Start of week" value={s.startOfWeek} options={['Monday', 'Sunday']} onChange={() => {}} />
-          <SelectField label="Time format" value={s.timeFormat} options={['12-hour', '24-hour']} onChange={() => {}} />
+          <SelectField label="Date format" value={s.dateFormat} options={['DD-MM-YY', 'MM/DD/YYYY', 'YYYY-MM-DD']} onChange={(v) => updateSettings({ dateFormat: v })} />
+          <SelectField label="Start of week" value={s.startOfWeek} options={['Monday', 'Sunday']} onChange={(v) => updateSettings({ startOfWeek: v })} />
+          <SelectField label="Time format" value={s.timeFormat} options={['12-hour', '24-hour']} onChange={(v) => updateSettings({ timeFormat: v })} />
         </Card>
 
         <Card icon={Bell} title="Notifications">
-          <Toggle label="Push notifications" desc="Get reminders for upcoming tasks" value={s.pushNotifications} onChange={() => {}} />
-          <Toggle label="Task reminders" desc="Daily reminder of what is due" value={s.taskReminders} onChange={() => {}} />
+          <Toggle label="Push notifications" desc="Get reminders for upcoming tasks" value={s.pushNotifications} onChange={(v) => updateSettings({ pushNotifications: v })} />
+          <Toggle label="Task reminders" desc="Daily reminder of what is due" value={s.taskReminders} onChange={(v) => updateSettings({ taskReminders: v })} />
         </Card>
 
         <Card icon={Lock} title="Security">

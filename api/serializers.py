@@ -2,9 +2,10 @@
 Django REST Framework serializers for Organic Mind.
 Mirrors frontend TypeScript types and provides validation limits.
 """
+from django.contrib.auth import password_validation
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import List, Tag, Task, Subtask, Note, CalendarEvent
+from .models import List, Tag, Task, Subtask, Note, CalendarEvent, Notification
 
 User = get_user_model()
 
@@ -38,36 +39,69 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'email', 'username']  # Username is immutable like email
     
     def validate_timezone(self, value):
-        """Validate timezone against common IANA timezones."""
-        valid_timezones = [
-            'UTC', 'US/Eastern', 'US/Central', 'US/Mountain', 'US/Pacific',
-            'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
-            'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Rome',
-            'Asia/Kolkata', 'Asia/Kathmandu', 'Asia/Tokyo', 'Asia/Shanghai',
-            'Australia/Sydney', 'Australia/Melbourne',
-        ]
-        if value not in valid_timezones:
-            # Allow any value that looks like a valid IANA timezone
-            if '/' not in value and value not in ['UTC']:
-                raise serializers.ValidationError('Invalid timezone format.')
+        """Validate timezone against the IANA timezone database.
+
+        Uses pytz's bundled timezone data so validation is consistent across
+        platforms regardless of the system tzdata.
+        """
+        import pytz
+        if value not in pytz.all_timezones_set:
+            raise serializers.ValidationError('Invalid timezone.')
         return value
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
-    """Serializer for user registration."""
-    password = serializers.CharField(write_only=True, min_length=6)
-    
+    """Serializer for user registration.
+
+    Passwords are checked against Django's AUTH_PASSWORD_VALIDATORS
+    (length, commonness, similarity to the account's attributes); the field
+    itself carries no min_length so the configured validators are the single
+    source of truth for the policy.
+    """
+    password = serializers.CharField(write_only=True)
+
     class Meta:
         model = User
         fields = ['username', 'email', 'password', 'first_name', 'last_name']
-    
+
+    def validate_email(self, value):
+        # The unique constraint on email lives in Meta.constraints, which DRF
+        # does not enforce, so without this check a duplicate email reached
+        # the database and surfaced as a 500. Case-insensitive on purpose:
+        # login looks users up by exact email, so case variants would create
+        # unreachable near-duplicate accounts.
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return value
+
+    def validate_username(self, value):
+        if User.objects.filter(username__iexact=value).exists():
+            raise serializers.ValidationError('A user with this username already exists.')
+        return value
+
+    def validate_password(self, value):
+        # Run the site-wide password policy. An unsaved user instance is
+        # passed so UserAttributeSimilarityValidator can compare against the
+        # username/email/name being registered.
+        user = User(
+            username=self.initial_data.get('username', ''),
+            email=self.initial_data.get('email', ''),
+            first_name=self.initial_data.get('first_name', ''),
+            last_name=self.initial_data.get('last_name', ''),
+        )
+        password_validation.validate_password(value, user=user)
+        return value
+
     def create(self, validated_data):
+        # is_active stays False until the user confirms their email via the
+        # verification link sent by the register view.
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
             password=validated_data['password'],
             first_name=validated_data.get('first_name', ''),
             last_name=validated_data.get('last_name', ''),
+            is_active=False,
         )
         return user
 
@@ -75,30 +109,32 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 class ChangePasswordSerializer(serializers.Serializer):
     """Serializer for password change."""
     current_password = serializers.CharField(required=True, write_only=True)
-    new_password = serializers.CharField(required=True, write_only=True, min_length=6)
+    new_password = serializers.CharField(required=True, write_only=True)
     confirm_password = serializers.CharField(required=True, write_only=True)
-    
+
     def validate(self, data):
         if data['new_password'] != data['confirm_password']:
             raise serializers.ValidationError({'confirm_password': 'New passwords do not match.'})
+        # Enforce the same policy as registration on the live account.
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        password_validation.validate_password(data['new_password'], user=user)
         return data
 
 
 class SubtaskSerializer(serializers.ModelSerializer):
-    """Serializer for subtasks."""
+    """Serializer for subtasks.
+
+    Subtasks are only created through the ``add_subtask`` action, which builds
+    them with ``Subtask.objects.create`` directly, so no ``create`` override is
+    needed here.
+    """
     id = serializers.CharField(read_only=True)
-    
+
     class Meta:
         model = Subtask
         fields = ['id', 'title', 'completed', 'created_at']
         read_only_fields = ['id', 'created_at']
-    
-    def create(self, validated_data):
-        task = self.context.get('task')
-        if not task:
-            raise serializers.ValidationError({'task': 'Task is required.'})
-        validated_data['title'] = validated_data['title'][:200]
-        return Subtask.objects.create(task=task, **validated_data)
 
 
 class ListSerializer(serializers.ModelSerializer):
@@ -154,8 +190,7 @@ class TaskSerializer(serializers.ModelSerializer):
         many=True,
         source='tags',
         queryset=Tag.objects.none(),
-        required=False,
-        write_only=True
+        required=False
     )
     subtasks = SubtaskSerializer(many=True, read_only=True)
     
@@ -240,7 +275,28 @@ class CalendarEventSerializer(serializers.ModelSerializer):
         return (value or '')[:1000]
     
     def validate(self, data):
-        if data.get('end_time') and data.get('start_time'):
-            if data['end_time'] < data['start_time']:
-                raise serializers.ValidationError({'end_time': 'End time must be after start time.'})
+        # On a partial update one of the times may be absent from ``data``,
+        # so fall back to the stored value before comparing — otherwise a
+        # PATCH sending only end_time could move it before the stored start.
+        start_time = data.get('start_time', getattr(self.instance, 'start_time', None))
+        end_time = data.get('end_time', getattr(self.instance, 'end_time', None))
+        if start_time and end_time and end_time < start_time:
+            raise serializers.ValidationError({'end_time': 'End time must be after start time.'})
         return data
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """Serializer for persisted notifications."""
+    id = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = Notification
+        fields = ['id', 'message', 'dedup_key', 'read', 'created_at']
+        # 'read' is writable so the client can mark notifications read via PATCH
+        read_only_fields = ['id', 'created_at']
+
+    def validate_message(self, value):
+        return value[:500]
+
+    def validate_dedup_key(self, value):
+        return value[:200]

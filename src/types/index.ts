@@ -6,6 +6,7 @@ export type NoteColor = 'note-yellow' | 'note-cyan' | 'note-coral' | 'note-green
 export type Subtask = { id: EntityId; title: string; completed: boolean; createdAt: string };
 export type Task = {
   id: EntityId; title: string; description: string; completed: boolean; priority: Priority;
+  color?: TaskColor | null;
   dueDate: string | null; listId: EntityId | null; tagIds: EntityId[]; subtasks: Subtask[];
   createdAt: string; updatedAt: string;
 };
@@ -13,7 +14,7 @@ export type ListItem = { id: EntityId; label: string; color: TaskColor; createdA
 export type TagItem = { id: EntityId; label: string; color: TaskColor; createdAt: string; updatedAt: string };
 export type Note = { id: EntityId; title: string; body: string; color: NoteColor; createdAt: string; updatedAt: string };
 export type CalendarEvent = { id: EntityId; title: string; description: string; date: string; startTime: string; endTime: string; color: TaskColor; createdAt: string; updatedAt: string };
-export type Notification = { id: EntityId; message: string; timestamp: string; read: boolean };
+export type Notification = { id: EntityId; message: string; timestamp: string; read: boolean; dedupKey: string };
 export type User = { 
   id: EntityId; 
   username: string;

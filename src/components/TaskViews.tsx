@@ -3,7 +3,7 @@ import { CalendarDays, Check, ChevronRight, Pencil, Plus, Trash2, X } from 'luci
 import type { Task, ListItem, TagItem, Store, EntityId } from '@/store/useAppStore';
 import type { Priority, Subtask } from '@/types';
 import { LIMITS } from '@/types';
-import { formatDate, todayStr } from '@/utils/format';
+import { formatDate } from '@/utils/format';
 
 function CharCounter({ current, max }: { current: number; max: number }) {
   const near = current > max * 0.85;
@@ -15,7 +15,7 @@ export function TaskRow({ task, lists, store, onOpen, hideCheckbox }: { task: Ta
   const dateFormat = store.data.settings.dateFormat;
   const done = task.subtasks.filter((s: Subtask) => s.completed).length;
   return (
-    <div className={`task-row ${task.completed ? 'completed' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+    <div className={`task-row ${task.completed ? 'completed' : ''}`} style={{ display: 'flex', width: '100%' }}>
       {!hideCheckbox && (
         <button className="checkbox" onClick={() => store.toggleTask(task.id)} aria-label={`Mark ${task.title} as ${task.completed ? 'incomplete' : 'complete'}`}>{task.completed && <Check size={12} />}</button>
       )}
@@ -39,7 +39,7 @@ export function AddTask({ store, defaultListId, defaultDueDate }: { store: Store
     e.preventDefault();
     const trimmed = value.trim().slice(0, LIMITS.TASK_TITLE);
     if (!trimmed) return;
-    store.addTask({ title: trimmed, description: '', completed: false, priority: 'Normal', dueDate: defaultDueDate ?? todayStr(), listId: defaultListId ?? null, tagIds: [], subtasks: [] });
+    store.addTask({ title: trimmed, description: '', completed: false, priority: 'Normal', dueDate: defaultDueDate ?? null, listId: defaultListId ?? null, tagIds: [], subtasks: [] });
     setValue('');
   };
   return <form className="add-task" onSubmit={submit}><Plus size={18} /><input value={value} onChange={(e) => setValue(e.target.value.slice(0, LIMITS.TASK_TITLE))} placeholder="Add New Task" maxLength={LIMITS.TASK_TITLE} /></form>;
