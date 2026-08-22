@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { CheckSquare, Check, AlertCircle, X } from 'lucide-react';
+import { CheckSquare, AlertCircle, X } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import AuthShell from '@/components/AuthShell';
 import Sidebar from '@/components/Sidebar';
@@ -85,19 +85,16 @@ function TodayView({ store, lists, onOpen }: { store: ReturnType<typeof useAppSt
         <AddTask store={store} defaultDueDate={today} />
         {tasks.length === 0 && <div className="empty-state"><p>No tasks for today. Add one above to get started.</p></div>}
         {tasks.map((task) => (
-          <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {isSelectionMode && (
-              <button
-                type="button"
-                className={`checkbox select-check ${selectedTaskIds.has(task.id) ? 'checked' : ''}`}
-                onClick={() => toggleSelection(task.id)}
-                aria-label={selectedTaskIds.has(task.id) ? 'Deselect task' : 'Select task'}
-              >
-                {selectedTaskIds.has(task.id) && <Check size={12} />}
-              </button>
-            )}
-            <TaskRow task={task} lists={lists} store={store} onOpen={onOpen} hideCheckbox={isSelectionMode} />
-          </div>
+          <TaskRow
+            key={task.id}
+            task={task}
+            lists={lists}
+            store={store}
+            onOpen={onOpen}
+            selectable={isSelectionMode}
+            selected={selectedTaskIds.has(task.id)}
+            onToggleSelect={toggleSelection}
+          />
         ))}
       </div>
     </div>
@@ -114,11 +111,75 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
   const tomorrowTasks = data.tasks.filter((t) => t.dueDate === tomorrow && !t.completed);
   const weekTasks = data.tasks.filter((t) => t.dueDate && t.dueDate > tomorrow && t.dueDate <= weekEnd && !t.completed);
   const total = data.tasks.filter((t) => t.dueDate && !t.completed).length;
+  const visibleTotal = todayTasks.length + tomorrowTasks.length + weekTasks.length;
+
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<EntityId>>(new Set());
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const toggleSelection = (taskId: EntityId) => {
+    setSelectedTaskIds(prev => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  };
+
+  const exitSelectionMode = () => {
+    setSelectedTaskIds(new Set());
+    setConfirmingDelete(false);
+    setIsSelectionMode(false);
+  };
+
+  const deleteSelected = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await Promise.all(Array.from(selectedTaskIds).map((id) => store.deleteTask(id)));
+      exitSelectionMode();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const selectionProps = (taskId: EntityId) => ({
+    selectable: isSelectionMode,
+    selected: selectedTaskIds.has(taskId),
+    onToggleSelect: toggleSelection,
+  });
 
   return (
     <div className="view-content upcoming-view">
-      <div className="view-heading"><div><h1>Upcoming</h1><span className="count-badge">{total}</span></div></div>
-      
+      <div className="view-heading">
+        <div><h1>Upcoming</h1><span className="count-badge">{total}</span></div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {isSelectionMode ? (
+            confirmingDelete ? (
+              <>
+                <span style={{ fontSize: 13, alignSelf: 'center' }}>Delete {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? '' : 's'}?</span>
+                <button className="danger-btn small-btn" onClick={deleteSelected} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete'}</button>
+                <button className="outline-button small-btn" onClick={() => setConfirmingDelete(false)} disabled={isDeleting}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <button className="outline-button small-btn" onClick={exitSelectionMode}>Cancel</button>
+                {selectedTaskIds.size > 0 && (
+                  <button className="danger-btn small-btn" onClick={() => setConfirmingDelete(true)}>Delete ({selectedTaskIds.size})</button>
+                )}
+              </>
+            )
+          ) : (
+            visibleTotal > 0 && (
+              <button className="more-button" aria-label="More options" onClick={() => setIsSelectionMode(true)}>
+                <CheckSquare size={20} />
+              </button>
+            )
+          )}
+        </div>
+      </div>
+
       {/* Horizontal Grid Layout: Today | Tomorrow | This Week */}
       <div className="upcoming-grid">
 
@@ -130,7 +191,7 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
           </div>
           <AddTask store={store} defaultDueDate={today} />
           <div className="task-card-list">
-            {todayTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for today.</p></div> : todayTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
+            {todayTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for today.</p></div> : todayTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} {...selectionProps(task.id)} />)}
           </div>
         </section>
 
@@ -142,7 +203,7 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
           </div>
           <AddTask store={store} defaultDueDate={tomorrow} />
           <div className="task-card-list">
-            {tomorrowTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for tomorrow.</p></div> : tomorrowTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
+            {tomorrowTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for tomorrow.</p></div> : tomorrowTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} {...selectionProps(task.id)} />)}
           </div>
         </section>
 
@@ -154,7 +215,7 @@ function UpcomingView({ store, lists, onOpen }: { store: ReturnType<typeof useAp
           </div>
           <AddTask store={store} defaultDueDate={weekEnd} />
           <div className="task-card-list">
-            {weekTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for this week.</p></div> : weekTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
+            {weekTasks.length === 0 ? <div className="empty-state-card"><p>No tasks scheduled for this week.</p></div> : weekTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} {...selectionProps(task.id)} />)}
           </div>
         </section>
 
@@ -167,14 +228,80 @@ function CompleteTasksView({ store, lists, onOpen }: { store: ReturnType<typeof 
   const { data } = store;
   const completedTasks = data.tasks.filter((t) => t.completed);
 
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<EntityId>>(new Set());
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const toggleSelection = (taskId: EntityId) => {
+    setSelectedTaskIds(prev => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  };
+
+  const exitSelectionMode = () => {
+    setSelectedTaskIds(new Set());
+    setConfirmingDelete(false);
+    setIsSelectionMode(false);
+  };
+
+  const deleteSelected = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await Promise.all(Array.from(selectedTaskIds).map((id) => store.deleteTask(id)));
+      exitSelectionMode();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="view-content">
       <div className="view-heading">
         <div><h1>Complete Tasks</h1><span className="count-badge">{completedTasks.length}</span></div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {isSelectionMode ? (
+            confirmingDelete ? (
+              <>
+                <span style={{ fontSize: 13, alignSelf: 'center' }}>Delete {selectedTaskIds.size} task{selectedTaskIds.size === 1 ? '' : 's'}?</span>
+                <button className="danger-btn small-btn" onClick={deleteSelected} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete'}</button>
+                <button className="outline-button small-btn" onClick={() => setConfirmingDelete(false)} disabled={isDeleting}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <button className="outline-button small-btn" onClick={exitSelectionMode}>Cancel</button>
+                {selectedTaskIds.size > 0 && (
+                  <button className="danger-btn small-btn" onClick={() => setConfirmingDelete(true)}>Delete ({selectedTaskIds.size})</button>
+                )}
+              </>
+            )
+          ) : (
+            completedTasks.length > 0 && (
+              <button className="more-button" aria-label="More options" onClick={() => setIsSelectionMode(true)}>
+                <CheckSquare size={20} />
+              </button>
+            )
+          )}
+        </div>
       </div>
       <div className="today-list">
         {completedTasks.length === 0 && <div className="empty-state"><p>No completed tasks yet. Check off a task and it will appear here.</p></div>}
-        {completedTasks.map((task) => <TaskRow key={task.id} task={task} lists={lists} store={store} onOpen={onOpen} />)}
+        {completedTasks.map((task) => (
+          <TaskRow
+            key={task.id}
+            task={task}
+            lists={lists}
+            store={store}
+            onOpen={onOpen}
+            selectable={isSelectionMode}
+            selected={selectedTaskIds.has(task.id)}
+            onToggleSelect={toggleSelection}
+          />
+        ))}
       </div>
     </div>
   );
@@ -250,19 +377,16 @@ function ListView({ store, listId, onOpen, onGoHome }: { store: ReturnType<typeo
         <AddTask store={store} defaultListId={listId} />
         {tasks.length === 0 && <div className="empty-state"><p>No tasks in this list yet. Add one above.</p></div>}
         {tasks.map((task) => (
-          <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {isSelectionMode && (
-              <button
-                type="button"
-                className={`checkbox select-check ${selectedTaskIds.has(task.id) ? 'checked' : ''}`}
-                onClick={() => toggleSelection(task.id)}
-                aria-label={selectedTaskIds.has(task.id) ? 'Deselect task' : 'Select task'}
-              >
-                {selectedTaskIds.has(task.id) && <Check size={12} />}
-              </button>
-            )}
-            <TaskRow task={task} lists={data.lists} store={store} onOpen={onOpen} hideCheckbox={isSelectionMode} />
-          </div>
+          <TaskRow
+            key={task.id}
+            task={task}
+            lists={data.lists}
+            store={store}
+            onOpen={onOpen}
+            selectable={isSelectionMode}
+            selected={selectedTaskIds.has(task.id)}
+            onToggleSelect={toggleSelection}
+          />
         ))}
       </div>
     </div>
@@ -339,19 +463,16 @@ function TagView({ store, tagId, onOpen, onGoHome }: { store: ReturnType<typeof 
         <AddTask store={store} />
         {tasks.length === 0 && <div className="empty-state"><p>No tasks with this tag. Add a task and assign this tag.</p></div>}
         {tasks.map((task) => (
-          <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {isSelectionMode && (
-              <button
-                type="button"
-                className={`checkbox select-check ${selectedTaskIds.has(task.id) ? 'checked' : ''}`}
-                onClick={() => toggleSelection(task.id)}
-                aria-label={selectedTaskIds.has(task.id) ? 'Deselect task' : 'Select task'}
-              >
-                {selectedTaskIds.has(task.id) && <Check size={12} />}
-              </button>
-            )}
-            <TaskRow task={task} lists={data.lists} store={store} onOpen={onOpen} hideCheckbox={isSelectionMode} />
-          </div>
+          <TaskRow
+            key={task.id}
+            task={task}
+            lists={data.lists}
+            store={store}
+            onOpen={onOpen}
+            selectable={isSelectionMode}
+            selected={selectedTaskIds.has(task.id)}
+            onToggleSelect={toggleSelection}
+          />
         ))}
       </div>
     </div>

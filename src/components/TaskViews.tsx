@@ -10,10 +10,36 @@ function CharCounter({ current, max }: { current: number; max: number }) {
   return <span className={`char-counter ${near ? 'char-counter-near' : ''}`}>{current} / {max}</span>;
 }
 
-export function TaskRow({ task, lists, store, onOpen, hideCheckbox }: { task: Task; lists: ListItem[]; store: Store; onOpen: (id: EntityId) => void; hideCheckbox?: boolean }) {
+export function TaskRow({ task, lists, store, onOpen, hideCheckbox, selectable, selected, onToggleSelect }: { task: Task; lists: ListItem[]; store: Store; onOpen: (id: EntityId) => void; hideCheckbox?: boolean; selectable?: boolean; selected?: boolean; onToggleSelect?: (id: EntityId) => void }) {
   const list = lists.find((l) => l.id === task.listId);
   const dateFormat = store.data.settings.dateFormat;
   const done = task.subtasks.filter((s: Subtask) => s.completed).length;
+  const meta = (task.dueDate || list || task.subtasks.length > 0) ? (
+    <div className="task-meta">
+      {task.dueDate && <span><CalendarDays size={13} />{formatDate(task.dueDate, dateFormat)}</span>}
+      {task.subtasks.length > 0 && <><span className="subtask-count">{done}/{task.subtasks.length}</span><span>Subtasks</span></>}
+      {list && <span><i className={`color-square ${list.color}`} /><span className="task-meta-label">{list.label}</span></span>}
+      {task.priority === 'High' && <span className="priority-high"><strong>High</strong></span>}
+    </div>
+  ) : null;
+  if (selectable) {
+    return (
+      <div
+        className={`task-row task-row-selectable ${task.completed ? 'completed' : ''} ${selected ? 'selected' : ''}`}
+        style={{ display: 'flex', width: '100%' }}
+        onClick={() => onToggleSelect?.(task.id)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleSelect?.(task.id); } }}
+        aria-pressed={!!selected}
+        aria-label={`${selected ? 'Deselect' : 'Select'} task ${task.title}`}
+      >
+        <span className={`checkbox select-check ${selected ? 'checked' : ''}`} aria-hidden="true">{selected && <Check size={12} />}</span>
+        <span className="task-title" title={task.title} style={{ flex: 1 }}>{task.title}</span>
+        {meta}
+      </div>
+    );
+  }
   return (
     <div className={`task-row ${task.completed ? 'completed' : ''}`} style={{ display: 'flex', width: '100%' }}>
       {!hideCheckbox && (
@@ -21,14 +47,7 @@ export function TaskRow({ task, lists, store, onOpen, hideCheckbox }: { task: Ta
       )}
       <button className="task-title" onClick={() => onOpen(task.id)} title={task.title} style={{ flex: 1 }}>{task.title}</button>
       <button className="task-arrow" onClick={() => onOpen(task.id)} aria-label="Open task details"><ChevronRight size={18} /></button>
-      {(task.dueDate || list || task.subtasks.length > 0) && (
-        <div className="task-meta">
-          {task.dueDate && <span><CalendarDays size={13} />{formatDate(task.dueDate, dateFormat)}</span>}
-          {task.subtasks.length > 0 && <><span className="subtask-count">{done}/{task.subtasks.length}</span><span>Subtasks</span></>}
-          {list && <span><i className={`color-square ${list.color}`} /><span className="task-meta-label">{list.label}</span></span>}
-          {task.priority === 'High' && <span className="priority-high"><strong>High</strong></span>}
-        </div>
-      )}
+      {meta}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, Pencil, Plus, Trash2, CheckSquare } from 'lucide-react';
+import { ChevronRight, Pencil, Plus, Trash2, CheckSquare, Check } from 'lucide-react';
 import type { Store, EntityId } from '@/store/useAppStore';
 import type { TaskColor } from '@/types';
 import { LIMITS } from '@/types';
@@ -126,38 +126,51 @@ export function TagsManagementView({ store, onPage }: { store: Store; onPage: (p
                 </div>
               );
             }
+            const isSelected = selectedTagIds.has(tag.id);
+            if (isSelectionMode) {
+              return (
+                <div
+                  key={tag.id}
+                  className={`mgmt-card mgmt-card-tag mgmt-card-selectable ${isSelected ? 'selected' : ''}`}
+                  onClick={() => toggleSelection(tag.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelection(tag.id); } }}
+                  aria-pressed={isSelected}
+                  aria-label={`${isSelected ? 'Deselect' : 'Select'} tag ${tag.label}`}
+                >
+                  <div className="mgmt-card-head">
+                    <span className={`checkbox select-check ${isSelected ? 'checked' : ''}`} aria-hidden="true">{isSelected && <Check size={12} />}</span>
+                    <span className={`tag ${tagClassMap[tag.color]}`}>{tag.label}</span>
+                    <span className="mgmt-card-title mgmt-card-title-tag"><ChevronRight size={16} /></span>
+                  </div>
+                  <div className="mgmt-card-meta">
+                    <span>{incomplete} active</span>
+                    <span>{count} total</span>
+                  </div>
+                </div>
+              );
+            }
             return (
-              <div key={tag.id} className="mgmt-card mgmt-card-tag" style={{ position: 'relative' }}>
-                {isSelectionMode && (
-                  <input
-                    type="checkbox"
-                    checked={selectedTagIds.has(tag.id)}
-                    onChange={() => toggleSelection(tag.id)}
-                    style={{ position: 'absolute', top: '12px', left: '12px', zIndex: 10 }}
-                  />
-                )}
-                <div className="mgmt-card-head" style={{ paddingLeft: isSelectionMode ? '32px' : '0' }}>
+              <div key={tag.id} className="mgmt-card mgmt-card-tag">
+                <div className="mgmt-card-head">
                   <span className={`tag ${tagClassMap[tag.color]}`}>{tag.label}</span>
-                  <button className="mgmt-card-title mgmt-card-title-tag" onClick={() => onPage(`tag-${tag.id}`)} title={tag.label}><ChevronRight size={16} /></button>
+                  <button className="mgmt-card-title mgmt-card-title-tag" onClick={() => onPage(`tag-${tag.id}`)} title={tag.label} aria-label={`Open tag ${tag.label}`}><ChevronRight size={16} /></button>
                 </div>
                 <div className="mgmt-card-meta">
                   <span>{incomplete} active</span>
                   <span>{count} total</span>
                 </div>
                 <div className="mgmt-card-actions">
-                  {!isSelectionMode && (
-                    <>
-                      <button className="side-action-btn" onClick={() => startEdit(tag.id)} aria-label={`Edit ${tag.label}`}><Pencil size={14} />Edit</button>
-                      {confirmDelete === tag.id ? (
-                        <span className="mgmt-confirm-inline">
-                          <span>Delete?</span>
-                          <button className="danger-btn small-btn" onClick={() => { store.deleteTag(tag.id); setConfirmDelete(null); }}>Yes</button>
-                          <button className="outline-button small-btn" onClick={() => setConfirmDelete(null)}>No</button>
-                        </span>
-                      ) : (
-                        <button className="side-action-btn danger" onClick={() => setConfirmDelete(tag.id)} aria-label={`Delete ${tag.label}`}><Trash2 size={14} />Delete</button>
-                      )}
-                    </>
+                  <button className="side-action-btn" onClick={() => startEdit(tag.id)} aria-label={`Edit ${tag.label}`}><Pencil size={14} />Edit</button>
+                  {confirmDelete === tag.id ? (
+                    <span className="mgmt-confirm-inline">
+                      <span>Delete?</span>
+                      <button className="danger-btn small-btn" onClick={() => { store.deleteTag(tag.id); setConfirmDelete(null); }}>Yes</button>
+                      <button className="outline-button small-btn" onClick={() => setConfirmDelete(null)}>No</button>
+                    </span>
+                  ) : (
+                    <button className="side-action-btn danger" onClick={() => setConfirmDelete(tag.id)} aria-label={`Delete ${tag.label}`}><Trash2 size={14} />Delete</button>
                   )}
                 </div>
               </div>

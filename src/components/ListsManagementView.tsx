@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, Pencil, Plus, Trash2, CheckSquare } from 'lucide-react';
+import { ChevronRight, Pencil, Plus, Trash2, CheckSquare, Check } from 'lucide-react';
 import type { Store, EntityId } from '@/store/useAppStore';
 import type { TaskColor } from '@/types';
 import { LIMITS } from '@/types';
@@ -117,17 +117,35 @@ export function ListsManagementView({ store, onPage }: { store: Store; onPage: (
                 </div>
               );
             }
+            const isSelected = selectedListIds.has(list.id);
+            if (isSelectionMode) {
+              return (
+                <div
+                  key={list.id}
+                  className={`mgmt-card mgmt-card-selectable ${isSelected ? 'selected' : ''}`}
+                  onClick={() => toggleSelection(list.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelection(list.id); } }}
+                  aria-pressed={isSelected}
+                  aria-label={`${isSelected ? 'Deselect' : 'Select'} list ${list.label}`}
+                >
+                  <div className="mgmt-card-head">
+                    <span className={`checkbox select-check ${isSelected ? 'checked' : ''}`} aria-hidden="true">{isSelected && <Check size={12} />}</span>
+                    <i className={`color-square ${list.color}`} />
+                    <span className="mgmt-card-title" title={list.label}>{list.label}</span>
+                    <ChevronRight size={16} className="mgmt-chevron" />
+                  </div>
+                  <div className="mgmt-card-meta">
+                    <span>{incomplete} active</span>
+                    <span>{count} total</span>
+                  </div>
+                </div>
+              );
+            }
             return (
-              <div key={list.id} className="mgmt-card" style={{ position: 'relative' }}>
-                {isSelectionMode && (
-                  <input
-                    type="checkbox"
-                    checked={selectedListIds.has(list.id)}
-                    onChange={() => toggleSelection(list.id)}
-                    style={{ position: 'absolute', top: '12px', left: '12px', zIndex: 10 }}
-                  />
-                )}
-                <div className="mgmt-card-head" style={{ paddingLeft: isSelectionMode ? '32px' : '0' }}>
+              <div key={list.id} className="mgmt-card">
+                <div className="mgmt-card-head">
                   <i className={`color-square ${list.color}`} />
                   <button className="mgmt-card-title" onClick={() => onPage(`list-${list.id}`)} title={list.label}>{list.label}</button>
                   <ChevronRight size={16} className="mgmt-chevron" />
@@ -137,19 +155,15 @@ export function ListsManagementView({ store, onPage }: { store: Store; onPage: (
                   <span>{count} total</span>
                 </div>
                 <div className="mgmt-card-actions">
-                  {!isSelectionMode && (
-                    <>
-                      <button className="side-action-btn" onClick={() => startEdit(list.id)} aria-label={`Edit ${list.label}`}><Pencil size={14} />Edit</button>
-                      {confirmDelete === list.id ? (
-                        <span className="mgmt-confirm-inline">
-                          <span>Delete?</span>
-                          <button className="danger-btn small-btn" onClick={() => { store.deleteList(list.id); setConfirmDelete(null); }}>Yes</button>
-                          <button className="outline-button small-btn" onClick={() => setConfirmDelete(null)}>No</button>
-                        </span>
-                      ) : (
-                        <button className="side-action-btn danger" onClick={() => setConfirmDelete(list.id)} aria-label={`Delete ${list.label}`}><Trash2 size={14} />Delete</button>
-                      )}
-                    </>
+                  <button className="side-action-btn" onClick={() => startEdit(list.id)} aria-label={`Edit ${list.label}`}><Pencil size={14} />Edit</button>
+                  {confirmDelete === list.id ? (
+                    <span className="mgmt-confirm-inline">
+                      <span>Delete?</span>
+                      <button className="danger-btn small-btn" onClick={() => { store.deleteList(list.id); setConfirmDelete(null); }}>Yes</button>
+                      <button className="outline-button small-btn" onClick={() => setConfirmDelete(null)}>No</button>
+                    </span>
+                  ) : (
+                    <button className="side-action-btn danger" onClick={() => setConfirmDelete(list.id)} aria-label={`Delete ${list.label}`}><Trash2 size={14} />Delete</button>
                   )}
                 </div>
               </div>

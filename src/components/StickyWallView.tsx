@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Pencil, Plus, Trash2, X, CheckSquare, Check } from 'lucide-react';
 import type { Store, EntityId } from '@/store/useAppStore';
 import type { Note, NoteColor } from '@/types';
 import { LIMITS } from '@/types';
@@ -22,6 +22,38 @@ export function StickyWallView({ store }: { store: Store }) {
   // Tracks whether the discard prompt was triggered by closing the modal or
   // by cancelling edit mode, so Discard performs the attempted action.
   const discardIntent = useRef<'close' | 'cancel'>('close');
+
+  // Bulk selection state
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<EntityId>>(new Set());
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const toggleSelection = (noteId: EntityId) => {
+    setSelectedNoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(noteId)) next.delete(noteId);
+      else next.add(noteId);
+      return next;
+    });
+  };
+
+  const exitSelectionMode = () => {
+    setSelectedNoteIds(new Set());
+    setConfirmingDelete(false);
+    setIsSelectionMode(false);
+  };
+
+  const deleteSelected = async () => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await Promise.all(Array.from(selectedNoteIds).map((id) => store.deleteNote(id)));
+      exitSelectionMode();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const selectedNote: Note | null = selectedNoteId ? data.notes.find((n) => n.id === selectedNoteId) ?? null : null;
   const dateFormat = store.data.settings.dateFormat;
@@ -96,19 +128,57 @@ export function StickyWallView({ store }: { store: Store }) {
     <div className="view-content sticky-view">
       <div className="view-heading">
         <div><h1>Sticky Wall</h1><span className="count-badge">{data.notes.length}</span></div>
-        <button className="outline-button" onClick={addNote}><Plus size={16} />Add Note</button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {isSelectionMode ? (
+            confirmingDelete ? (
+              <>
+                <span style={{ fontSize: 13, alignSelf: 'center' }}>Delete {selectedNoteIds.size} note{selectedNoteIds.size === 1 ? '' : 's'}?</span>
+                <button className="danger-btn small-btn" onClick={deleteSelected} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete'}</button>
+                <button className="outline-button small-btn" onClick={() => setConfirmingDelete(false)} disabled={isDeleting}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <button className="outline-button small-btn" onClick={exitSelectionMode}>Cancel</button>
+                {selectedNoteIds.size > 0 && (
+                  <button className="danger-btn small-btn" onClick={() => setConfirmingDelete(true)}>Delete ({selectedNoteIds.size})</button>
+                )}
+              </>
+            )
+          ) : (
+            <>
+              <button className="outline-button" onClick={addNote}><Plus size={16} />Add Note</button>
+              {data.notes.length > 0 && (
+                <button className="more-button" aria-label="Select notes" onClick={() => setIsSelectionMode(true)}>
+                  <CheckSquare size={20} />
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
       {data.notes.length === 0 ? (
         <div className="empty-state"><p>No notes yet. Click "Add Note" to create one.</p></div>
       ) : (
         <div className="notes-grid">
-          {data.notes.map((note) => (
-            <button className={`note-card ${note.color}`} key={note.id} onClick={() => setSelectedNoteId(note.id)} aria-label={`Open note ${note.title}`}>
-              <h2 className="note-card-title">{note.title}</h2>
-              <p className="note-card-body">{note.body}</p>
-              <span className="note-date">{localISO(new Date(note.updatedAt)) === localISO(new Date()) ? 'Today' : formatDate(localISO(new Date(note.updatedAt)), dateFormat)}</span>
-            </button>
-          ))}
+          {data.notes.map((note) => {
+            const isSelected = selectedNoteIds.has(note.id);
+            return (
+              <button
+                className={`note-card ${note.color} ${isSelectionMode ? 'note-card-selectable' : ''} ${isSelected ? 'selected' : ''}`}
+                key={note.id}
+                onClick={() => isSelectionMode ? toggleSelection(note.id) : setSelectedNoteId(note.id)}
+                aria-pressed={isSelectionMode ? isSelected : undefined}
+                aria-label={isSelectionMode ? `${isSelected ? 'Deselect' : 'Select'} note ${note.title}` : `Open note ${note.title}`}
+              >
+                {isSelectionMode && (
+                  <span className={`checkbox select-check note-check ${isSelected ? 'checked' : ''}`} aria-hidden="true">{isSelected && <Check size={12} />}</span>
+                )}
+                <h2 className="note-card-title">{note.title}</h2>
+                <p className="note-card-body">{note.body}</p>
+                <span className="note-date">{localISO(new Date(note.updatedAt)) === localISO(new Date()) ? 'Today' : formatDate(localISO(new Date(note.updatedAt)), dateFormat)}</span>
+              </button>
+            );
+          })}
         </div>
       )}
       {selectedNote && (
