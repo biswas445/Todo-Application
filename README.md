@@ -1,14 +1,14 @@
 # Organic Mind
 
-Organic Mind is a to-do and productivity web app. It helps you keep your tasks, notes, and events in one place. You can create tasks, break them into smaller steps, organize them with lists and tags, and see everything on a calendar. It sends you live notifications as things happen, and you can use it from any device with a web browser.
+Organic Mind is a to-do and productivity web app. It helps you keep your tasks, notes, and events in one place. You can create tasks, break them into smaller steps, organize them with lists and tags, and see everything on a calendar. It notifies you as tasks get done and deadlines approach, and you can use it from any device with a web browser.
 
 ## Features
 
 - **Task management** – create, organize, and complete tasks with subtasks, lists, and tags, plus search and filters.
 - **Calendar** – see your tasks and events in day, week, or month views.
 - **Sticky notes** – keep quick, color-coded notes on a wall.
-- **Real-time notifications** – get instant updates across devices over WebSockets.
-- **Accounts & settings** – secure sign-in with email verification, plus profile and preference controls.
+- **Notifications** – completion alerts and task reminders, in the app's notification feed.
+- **Accounts & settings** – secure sign-in, plus profile and preference controls.
 
 ## Requirements
 
@@ -87,7 +87,6 @@ Once both servers are running, open these in your browser:
 | Backend API | http://localhost:8000/api |
 | Health check | http://localhost:8000/api/health/ |
 | Admin panel | http://localhost:8000/admin |
-| WebSocket | ws://localhost:8000/ws/notifications/ |
 
 ## API Endpoints
 
@@ -103,12 +102,9 @@ All endpoints start with `http://localhost:8000/api`. Except for the auth and he
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| POST | `/auth/register/` | Create an account (sends a verification email) |
-| POST | `/auth/resend_verification/` | Resend the verification email |
-| GET | `/auth/verify_email/` | Verify an email using the link token |
+| POST | `/auth/register/` | Create an account (ready to sign in immediately) |
 | POST | `/auth/login/` | Sign in and get a token |
 | POST | `/auth/logout/` | Sign out |
-| POST | `/auth/ws_ticket/` | Get a short-lived WebSocket ticket |
 
 ### User
 
@@ -167,22 +163,20 @@ Todo-Application/
 │   ├── migrations/             #   Database migrations
 │   ├── admin.py                #   Django admin setup
 │   ├── authentication.py       #   Expiring token authentication
-│   ├── middleware.py           #   WebSocket ticket validation
 │   ├── models.py               #   Data models
+│   ├── password_validators.py  #   Password complexity policy
 │   ├── serializers.py          #   DRF serializers
 │   ├── signals.py              #   Notification signal handlers
 │   ├── tests.py                #   Backend tests
-│   ├── views.py                #   API viewsets
-│   └── websocket.py            #   WebSocket consumer
+│   └── views.py                #   API viewsets
 ├── organic_mind_backend/       # Django project config
-│   ├── asgi.py                 #   ASGI entrypoint (HTTP + WebSocket)
+│   ├── asgi.py                 #   ASGI entrypoint
 │   ├── settings.py             #   Settings
 │   ├── urls.py                 #   Root URL routing
 │   └── wsgi.py                 #   WSGI entrypoint
 ├── src/                        # React frontend
 │   ├── api/                    #   API client
 │   ├── components/             #   UI views and components
-│   ├── hooks/                  #   WebSocket hook
 │   ├── store/                  #   App state
 │   ├── types/                  #   TypeScript types
 │   ├── utils/                  #   Helpers

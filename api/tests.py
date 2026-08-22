@@ -7,14 +7,9 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from channels.db import database_sync_to_async
-from channels.layers import get_channel_layer
-from channels.testing import WebsocketCommunicator
-from organic_mind_backend.asgi import application
 from .models import List, Tag, Task, Subtask, Note, CalendarEvent, Notification
 from unittest import mock
 import os
-import re
 import subprocess
 import sys
 import uuid
@@ -22,25 +17,13 @@ import uuid
 User = get_user_model()
 
 
-def extract_verification_token():
-    """Pull the email-verification token out of the test mail outbox."""
-    from django.core import mail
-    message = mail.outbox[-1]
-    match = re.search(r"token=(\S+)", message.body)
-    assert match, "No verification link found in the outbox email"
-    return match.group(1)
-
-
-def register_and_activate(client, user_data):
-    """Register via the API, follow the emailed verification link, and log in.
+def register_and_login(client, user_data):
+    """Register via the API, then log in with the new credentials.
 
     Returns the login response so callers can grab the auth token.
     """
     response = client.post("/api/auth/register/", user_data)
     assert response.status_code == status.HTTP_201_CREATED, response.content
-    token = extract_verification_token()
-    verify = client.get(f"/api/auth/verify_email/?token={token}")
-    assert verify.status_code == status.HTTP_200_OK, verify.content
     return client.post(
         "/api/auth/login/",
         {"email": user_data["email"], "password": user_data["password"]},
@@ -64,20 +47,19 @@ class AuthenticationTests(TestCase):
         }
         
     def test_register_user(self):
-        """Test registration creates an inactive account and emails a link."""
+        """Test registration creates an active account ready to sign in."""
         response = self.client.post(self.register_url, self.user_data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        # No token before the email is verified.
+        # No token at registration: the client signs in separately.
         self.assertNotIn("token", response.data)
         self.assertIn("user", response.data)
         self.assertEqual(response.data["user"]["email"], "test@example.com")
 
         user = User.objects.get(email="test@example.com")
-        self.assertFalse(user.is_active)
-        # A verification email was sent.
+        self.assertTrue(user.is_active)
+        # Registration sends no email.
         from django.core import mail
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertIn("verify_email", mail.outbox[0].body)
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_register_duplicate_email_fails(self):
         """Test registering with same email fails."""
@@ -115,15 +97,30 @@ class AuthenticationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("password", response.data)
 
-    def test_verify_email_activates_account_and_allows_login(self):
-        """Test the emailed link activates the account."""
+    def test_register_rejects_password_missing_character_types(self):
+        """Test the policy demands uppercase, lowercase, number and special."""
+        weak_passwords = [
+            ("nouppercase-123!", "an uppercase letter"),
+            ("NOLOWERCASE-123!", "a lowercase letter"),
+            ("NoNumbers-abc!", "a number"),
+            ("NoSpecial12345x", "a special character"),
+        ]
+        for weak, expected_fragment in weak_passwords:
+            with self.subTest(password=weak):
+                response = self.client.post(
+                    self.register_url, dict(self.user_data, password=weak)
+                )
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn("password", response.data)
+                self.assertTrue(
+                    any(expected_fragment in message for message in response.data["password"]),
+                    response.data["password"],
+                )
+        self.assertFalse(User.objects.filter(email="test@example.com").exists())
+
+    def test_login_immediately_after_registration_succeeds(self):
+        """Test a freshly registered account can sign in right away."""
         self.client.post(self.register_url, self.user_data)
-        token = extract_verification_token()
-
-        response = self.client.get(f"/api/auth/verify_email/?token={token}")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(User.objects.get(email="test@example.com").is_active)
-
         login = self.client.post(
             self.login_url,
             {"email": "test@example.com", "password": "securePass-2026x"},
@@ -131,26 +128,20 @@ class AuthenticationTests(TestCase):
         self.assertEqual(login.status_code, status.HTTP_200_OK)
         self.assertIn("token", login.data)
 
-    def test_verify_email_rejects_invalid_token(self):
-        """Test tampered/unknown verification tokens are rejected."""
+    def test_login_deactivated_account_fails(self):
+        """Test a deactivated account cannot sign in."""
         self.client.post(self.register_url, self.user_data)
-        response = self.client.get("/api/auth/verify_email/?token=not-a-real-token")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(User.objects.get(email="test@example.com").is_active)
-
-    def test_login_before_email_verification_fails(self):
-        """Test an unverified account cannot sign in."""
-        self.client.post(self.register_url, self.user_data)
+        User.objects.filter(email="test@example.com").update(is_active=False)
         login_data = {"email": "test@example.com", "password": "securePass-2026x"}
         response = self.client.post(self.login_url, login_data)
-        # Uniform 401 + generic message so the endpoint cannot be used to
-        # enumerate which emails hold an unverified account.
+        # Uniform 401 + generic message so the endpoint cannot reveal which
+        # emails hold a deactivated account.
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertEqual(response.data["error"], "Invalid email or password.")
 
     def test_login_valid_credentials(self):
         """Test login with valid credentials returns token."""
-        register_and_activate(self.client, self.user_data)
+        register_and_login(self.client, self.user_data)
         login_data = {"email": "test@example.com", "password": "securePass-2026x"}
         response = self.client.post(self.login_url, login_data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -158,7 +149,7 @@ class AuthenticationTests(TestCase):
 
     def test_login_invalid_credentials(self):
         """Test login with invalid credentials fails."""
-        register_and_activate(self.client, self.user_data)
+        register_and_login(self.client, self.user_data)
         login_data = {"email": "test@example.com", "password": "wrongpassword"}
         response = self.client.post(self.login_url, login_data)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -170,7 +161,7 @@ class AuthenticationTests(TestCase):
 
     def test_logout(self):
         """Test logout invalidates token."""
-        register_and_activate(self.client, self.user_data)
+        register_and_login(self.client, self.user_data)
         login_data = {"email": "test@example.com", "password": "securePass-2026x"}
         login_response = self.client.post(self.login_url, login_data)
         token = login_response.data["token"]
@@ -196,8 +187,8 @@ class ProfileTests(TestCase):
             "email": "profile@example.com",
             "password": "securePass-2026x"
         }
-        # Register, verify the emailed link, and login
-        login_response = register_and_activate(self.client, self.user_data)
+        # Register and login
+        login_response = register_and_login(self.client, self.user_data)
         self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
         self.user = User.objects.get(email="profile@example.com")
@@ -1207,8 +1198,8 @@ class DeleteAccountTests(TestCase):
             "email": "delete@example.com",
             "password": "securePass-2026x"
         }
-        # Register, verify the emailed link, and login
-        login_response = register_and_activate(self.client, self.user_data)
+        # Register and login
+        login_response = register_and_login(self.client, self.user_data)
         self.token = login_response.data["token"]
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token}')
         self.user = User.objects.get(email="delete@example.com")
@@ -1292,7 +1283,7 @@ class DeleteAccountTests(TestCase):
             "email": "user2@example.com",
             "password": "securePass-777y"
         }
-        user2_login = register_and_activate(client2, user2_data)
+        user2_login = register_and_login(client2, user2_data)
         user2_token = user2_login.data["token"]
         client2.credentials(HTTP_AUTHORIZATION=f'Token {user2_token}')
         user2 = User.objects.get(email="user2@example.com")
@@ -1514,180 +1505,6 @@ class NotificationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertFalse(Notification.objects.get(dedup_key="mar-5").read)
 
-    def test_create_notification_broadcasts_over_websocket(self):
-        """Test creating a notification pushes it to the user's WS group."""
-        with mock.patch("api.views.channel_layer") as mock_layer:
-            mock_layer.group_send = mock.AsyncMock()
-            data = {"message": "Broadcast me", "dedup_key": "ws-broadcast-1"}
-            response = self.client.post(self.notifications_url, data)
-            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-
-            mock_layer.group_send.assert_awaited_once()
-            group, payload = mock_layer.group_send.call_args.args
-            self.assertEqual(group, f"user_{self.user.id}_notifications")
-            self.assertEqual(payload["type"], "send_notification")
-            self.assertEqual(payload["data"]["type"], "notification_created")
-            self.assertEqual(payload["data"]["object"]["message"], "Broadcast me")
-            self.assertEqual(payload["data"]["object"]["read"], False)
-
-    def test_duplicate_dedup_key_does_not_broadcast_again(self):
-        """Test an idempotent re-POST returns the stored item without a broadcast."""
-        data = {"message": "Once only", "dedup_key": "ws-broadcast-2"}
-        self.client.post(self.notifications_url, data)
-
-        with mock.patch("api.views.channel_layer") as mock_layer:
-            mock_layer.group_send = mock.AsyncMock()
-            response = self.client.post(self.notifications_url, data)
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            mock_layer.group_send.assert_not_awaited()
-
-
-class WebSocketTests(TestCase):
-    """Test the real-time notification WebSocket endpoint.
-
-    Every connection passes an Origin header taken from the dev CORS
-    allow-list so the tests exercise ticket authentication instead of being
-    rejected up front by the origin validator (which closes connections with
-    no or disallowed Origin).
-    """
-
-    ORIGIN_HEADERS = [(b"origin", b"http://localhost:5173")]
-
-    async def test_anonymous_connection_is_rejected(self):
-        """Test connections without a ticket are closed."""
-        communicator = WebsocketCommunicator(
-            application, "/ws/notifications/", headers=self.ORIGIN_HEADERS
-        )
-        connected, _ = await communicator.connect()
-        self.assertFalse(connected)
-        await communicator.disconnect()
-
-    async def test_invalid_ticket_connection_is_rejected(self):
-        """Test connections with a garbage ticket are closed."""
-        communicator = WebsocketCommunicator(
-            application, "/ws/notifications/?ticket=not-a-real-ticket",
-            headers=self.ORIGIN_HEADERS,
-        )
-        connected, _ = await communicator.connect()
-        self.assertFalse(connected)
-        await communicator.disconnect()
-
-    async def test_raw_api_token_in_query_string_is_rejected(self):
-        """Test the legacy ?token= path no longer authenticates the socket.
-
-        Long-lived tokens must not be usable in the WebSocket URL because
-        query strings leak into server/proxy logs.
-        """
-        user = await database_sync_to_async(User.objects.create_user)(
-            username="tokenuser", email="token@example.com", password="securePass-2026x"
-        )
-        token = await database_sync_to_async(Token.objects.create)(user=user)
-        communicator = WebsocketCommunicator(
-            application, f"/ws/notifications/?token={token.key}",
-            headers=self.ORIGIN_HEADERS,
-        )
-        connected, _ = await communicator.connect()
-        self.assertFalse(connected)
-        await communicator.disconnect()
-
-    async def test_valid_ticket_connects_and_receives_broadcast(self):
-        """Test ticket-authenticated connections join the user's group."""
-        from api.middleware import generate_ws_ticket
-
-        user = await database_sync_to_async(User.objects.create_user)(
-            username="wsuser", email="ws@example.com", password="securePass-2026x"
-        )
-        ticket = await database_sync_to_async(generate_ws_ticket)(user)
-
-        communicator = WebsocketCommunicator(
-            application, f"/ws/notifications/?ticket={ticket}",
-            headers=self.ORIGIN_HEADERS,
-        )
-        connected, _ = await communicator.connect()
-        self.assertTrue(connected)
-
-        welcome = await communicator.receive_json_from()
-        self.assertEqual(welcome["type"], "connection_established")
-
-        channel_layer = get_channel_layer()
-        await channel_layer.group_send(
-            f"user_{user.id}_notifications",
-            {
-                "type": "send_notification",
-                "data": {"message": "List created", "type": "list_created"},
-            },
-        )
-        message = await communicator.receive_json_from()
-        self.assertEqual(message["type"], "notification")
-        self.assertEqual(message["data"]["message"], "List created")
-
-        await communicator.disconnect()
-
-    async def test_ticket_cannot_be_reused(self):
-        """Test a ticket authenticates only one connection (replay protection).
-
-        Within the ticket's lifetime a leaked ticket must not be replayable:
-        the nonce embedded in the ticket is consumed on first redemption.
-        """
-        from api.middleware import generate_ws_ticket
-
-        user = await database_sync_to_async(User.objects.create_user)(
-            username="replayuser", email="replay@example.com", password="securePass-2026x"
-        )
-        ticket = await database_sync_to_async(generate_ws_ticket)(user)
-
-        first = WebsocketCommunicator(
-            application, f"/ws/notifications/?ticket={ticket}",
-            headers=self.ORIGIN_HEADERS,
-        )
-        connected, _ = await first.connect()
-        self.assertTrue(connected)
-
-        second = WebsocketCommunicator(
-            application, f"/ws/notifications/?ticket={ticket}",
-            headers=self.ORIGIN_HEADERS,
-        )
-        connected, _ = await second.connect()
-        self.assertFalse(connected)
-
-        await first.disconnect()
-        await second.disconnect()
-
-    async def test_ticket_without_nonce_is_rejected(self):
-        """Test a ticket missing the single-use nonce cannot authenticate."""
-        from django.core import signing
-        from api.middleware import WS_TICKET_SALT
-
-        user = await database_sync_to_async(User.objects.create_user)(
-            username="nonceless", email="nonceless@example.com", password="securePass-2026x"
-        )
-        ticket = await database_sync_to_async(signing.dumps)(
-            {"user_id": str(user.pk)}, salt=WS_TICKET_SALT
-        )
-        communicator = WebsocketCommunicator(
-            application, f"/ws/notifications/?ticket={ticket}",
-            headers=self.ORIGIN_HEADERS,
-        )
-        connected, _ = await communicator.connect()
-        self.assertFalse(connected)
-        await communicator.disconnect()
-
-    async def test_disallowed_origin_is_rejected(self):
-        """Test connections from origins outside the CORS allow-list are closed."""
-        from api.middleware import generate_ws_ticket
-
-        user = await database_sync_to_async(User.objects.create_user)(
-            username="originuser", email="origin@example.com", password="securePass-2026x"
-        )
-        ticket = await database_sync_to_async(generate_ws_ticket)(user)
-        communicator = WebsocketCommunicator(
-            application, f"/ws/notifications/?ticket={ticket}",
-            headers=[(b"origin", b"http://evil.example.com")],
-        )
-        connected, _ = await communicator.connect()
-        self.assertFalse(connected)
-        await communicator.disconnect()
-
 
 class HealthCheckTests(TestCase):
     """Test the unauthenticated health-check endpoint."""
@@ -1799,61 +1616,19 @@ class TaskCompletionSignalTests(TestCase):
         self.assertEqual(response.data["id"], str(server_notification.id))
         self.assertEqual(Notification.objects.filter(user=self.user).count(), 1)
 
-    def test_completing_task_broadcasts_notification_over_websocket(self):
-        """Test the server-generated completion notification reaches the WS group."""
-        task = Task.objects.create(user=self.user, title="My Task", completed=False)
-
-        with mock.patch("api.signals.get_channel_layer") as mock_get:
-            mock_layer = mock.Mock()
-            mock_layer.group_send = mock.AsyncMock()
-            mock_get.return_value = mock_layer
-
-            response = self.client.post(f"/api/tasks/{task.id}/toggle/")
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-            mock_layer.group_send.assert_awaited_once()
-            group, payload = mock_layer.group_send.call_args.args
-            self.assertEqual(group, f"user_{self.user.id}_notifications")
-            self.assertEqual(payload["data"]["type"], "notification_created")
-            self.assertEqual(
-                payload["data"]["object"]["dedup_key"],
-                f"task-completed:{task.id}"
-            )
-
-    def test_recompleting_task_does_not_broadcast_again(self):
-        """Test no broadcast fires when the notification already exists."""
-        task = Task.objects.create(user=self.user, title="My Task", completed=False)
-        self.client.post(f"/api/tasks/{task.id}/toggle/")  # complete
-        self.client.post(f"/api/tasks/{task.id}/toggle/")  # un-complete
-
-        with mock.patch("api.signals.get_channel_layer") as mock_get:
-            mock_layer = mock.Mock()
-            mock_layer.group_send = mock.AsyncMock()
-            mock_get.return_value = mock_layer
-
-            self.client.post(f"/api/tasks/{task.id}/toggle/")  # re-complete
-            mock_layer.group_send.assert_not_awaited()
-
-    def test_raw_save_does_not_create_notification_or_broadcast(self):
+    def test_raw_save_does_not_create_notification(self):
         """Test a raw save (what loaddata does) flipping completed stays silent.
 
         Without the ``raw`` guard, deserializing a fixture over an existing
-        open task would generate a notification and a WebSocket broadcast even
-        though no user action happened.
+        open task would generate a notification even though no user action
+        happened.
         """
         task = Task.objects.create(user=self.user, title="Fixture Task", completed=False)
         self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
 
-        with mock.patch("api.signals.get_channel_layer") as mock_get:
-            mock_layer = mock.Mock()
-            mock_layer.group_send = mock.AsyncMock()
-            mock_get.return_value = mock_layer
-
-            # save_base(raw=True) is exactly how loaddata persists rows.
-            task.completed = True
-            task.save_base(raw=True)
-
-            mock_layer.group_send.assert_not_awaited()
+        # save_base(raw=True) is exactly how loaddata persists rows.
+        task.completed = True
+        task.save_base(raw=True)
 
         task.refresh_from_db()
         self.assertTrue(task.completed)
@@ -1918,7 +1693,7 @@ class UserRouteRestrictionTests(TestCase):
 
 
 class TokenSecurityTests(TestCase):
-    """Test API token expiry and WebSocket ticket issuance."""
+    """Test API token expiry and rotation."""
 
     def setUp(self):
         self.client = APIClient()
@@ -1975,44 +1750,6 @@ class TokenSecurityTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {second_token}')
         response = self.client.get("/api/user/me/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-    def test_ws_ticket_requires_authentication(self):
-        """Test the ticket endpoint rejects anonymous callers."""
-        response = self.client.post("/api/auth/ws_ticket/")
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-
-    def test_ws_ticket_is_short_lived_and_valid(self):
-        """Test the issued ticket authenticates a socket but expires quickly."""
-        from django.core import signing
-        from api.middleware import WS_TICKET_SALT
-
-        token = Token.objects.create(user=self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
-        response = self.client.post("/api/auth/ws_ticket/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        ticket = response.data["ticket"]
-        # The long-lived API token must not appear in the ticket.
-        self.assertNotIn(token.key, ticket)
-
-        payload = signing.loads(ticket, salt=WS_TICKET_SALT, max_age=60)
-        self.assertEqual(payload["user_id"], str(self.user.id))
-        # Single-use: every ticket carries a random nonce consumed on
-        # first redemption.
-        self.assertTrue(payload.get("nonce"))
-
-        # The same ticket is rejected once it is older than the max age.
-        with self.assertRaises(signing.BadSignature):
-            signing.loads(ticket, salt=WS_TICKET_SALT, max_age=0)
-
-    def test_ws_tickets_carry_a_fresh_nonce_each_time(self):
-        """Test two tickets for the same user are never identical."""
-        token = Token.objects.create(user=self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
-        first = self.client.post("/api/auth/ws_ticket/")
-        second = self.client.post("/api/auth/ws_ticket/")
-        self.assertEqual(first.status_code, status.HTTP_200_OK)
-        self.assertEqual(second.status_code, status.HTTP_200_OK)
-        self.assertNotEqual(first.data["ticket"], second.data["ticket"])
 
 
 class SeedE2eUserCommandTests(TestCase):
@@ -2122,7 +1859,6 @@ class SettingsGuardTests(TestCase):
         "DJANGO_SECRET_KEY",
         "DJANGO_ALLOWED_HOSTS",
         "DJANGO_CORS_ORIGINS",
-        "DJANGO_EMAIL_BACKEND",
         "DJANGO_DATABASE_URL",
     )
 
@@ -2133,7 +1869,6 @@ class SettingsGuardTests(TestCase):
         "DJANGO_SECRET_KEY": "test-production-secret-key",
         "DJANGO_ALLOWED_HOSTS": "api.example.com",
         "DJANGO_CORS_ORIGINS": "https://app.example.com",
-        "DJANGO_EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
         "DJANGO_DATABASE_URL": "postgres://user:pass@db.example.com:5432/app",
     }
 
@@ -2156,14 +1891,6 @@ class SettingsGuardTests(TestCase):
     def test_production_environment_imports_cleanly(self):
         result = self.import_settings(self.PRODUCTION_ENV)
         self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_missing_email_backend_refuses_to_start(self):
-        env = {k: v for k, v in self.PRODUCTION_ENV.items()
-               if k != "DJANGO_EMAIL_BACKEND"}
-        result = self.import_settings(env)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("ImproperlyConfigured", result.stderr)
-        self.assertIn("DJANGO_EMAIL_BACKEND", result.stderr)
 
     def test_missing_cors_origins_refuses_to_start(self):
         env = {k: v for k, v in self.PRODUCTION_ENV.items()

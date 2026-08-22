@@ -27,17 +27,6 @@ function jsonResponse(data: unknown, status = 200) {
 beforeEach(() => {
   vi.stubGlobal('localStorage', mockLocalStorage);
   mockLocalStorage.clear();
-  // The signed-in workspace opens a WebSocket; keep it inert in tests.
-  vi.stubGlobal('WebSocket', class {
-    static OPEN = 1;
-    readyState = 0;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: { data: string }) => void) | null = null;
-    onerror: ((event: unknown) => void) | null = null;
-    onclose: ((event: { code: number; reason: string }) => void) | null = null;
-    close() { this.readyState = 3; }
-    send() {}
-  });
 });
 
 afterEach(() => {
@@ -87,8 +76,8 @@ describe('auth error surfacing', () => {
       const path = new URL(String(input)).pathname.replace(/^\/api/, '');
       const method = init?.method ?? 'GET';
       if (method === 'POST' && path === '/auth/register/') {
-        // Registration no longer returns a token: the account must verify
-        // its email before sign-in is possible.
+        // Registration returns no token: the user signs in separately
+        // after the redirect to the sign-in view.
         return jsonResponse({ message: 'Account created.', user }, 201);
       }
       throw new Error(`Unhandled test request: ${method} ${path}`);
@@ -101,12 +90,12 @@ describe('auth error surfacing', () => {
 
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'New User' } });
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@example.com' } });
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Password123!' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign up' }));
 
     // The banner appears on the sign-in view after the redirect timeout.
     await screen.findByText(/Account created/i, {}, { timeout: 3000 });
-    await screen.findByText(/Check your email/i, {}, { timeout: 3000 });
+    await screen.findByText(/Sign in with your new credentials/i, {}, { timeout: 3000 });
     expect(screen.getByLabelText('Email')).toBeTruthy();
     // No session is created at signup.
     expect(mockLocalStorage.getItem('auth_token')).toBeNull();
@@ -130,9 +119,6 @@ describe('auth error surfacing', () => {
         loginCalls += 1;
         if (loginCalls === 1) return jsonResponse({ error: 'Invalid email or password.' }, 401);
         return jsonResponse({ token: 'fresh-token', user });
-      }
-      if (method === 'POST' && path === '/auth/ws_ticket/') {
-        return jsonResponse({ ticket: 'test-ticket' });
       }
       if (method === 'GET') return jsonResponse([]);
       throw new Error(`Unhandled test request: ${method} ${path}`);

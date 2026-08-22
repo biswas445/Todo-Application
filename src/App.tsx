@@ -1,8 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { CheckSquare, Check, AlertCircle, X } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
-import { useWebSocketNotifications } from '@/hooks/useWebSocketNotifications';
-import type { ApiTask, ApiNote, ApiEvent, ApiNotification } from '@/api';
 import AuthShell from '@/components/AuthShell';
 import Sidebar from '@/components/Sidebar';
 import { TaskRow, AddTask, TaskModal } from '@/components/TaskViews';
@@ -366,46 +364,6 @@ function Workspace({ store }: { store: ReturnType<typeof useAppStore> }) {
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Real-time sync: apply changes broadcast by the backend over WebSocket.
-  // Object payloads are upserted directly; list/tag mutations and note/event
-  // updates/deletes (which carry no payload) trigger a collection refresh.
-  // `connected`/`reconnect` drive the sidebar's live-sync indicator.
-  const { connected: wsConnected, reconnect: wsReconnect } = useWebSocketNotifications({
-    onTaskCreated: (task) => { if (task) store.applyExternalTask(task as ApiTask); },
-    onTaskUpdated: (task) => { if (task) store.applyExternalTask(task as ApiTask); },
-    onTaskDeleted: (data) => {
-      const id = (data as { object?: { id?: EntityId } } | undefined)?.object?.id;
-      if (id) store.removeExternalTask(id);
-    },
-    onNoteCreated: (note) => { if (note) store.applyExternalNote(note as ApiNote); },
-    onEventCreated: (event) => { if (event) store.applyExternalEvent(event as ApiEvent); },
-    onNotification: (data) => {
-      switch (data?.type) {
-        case 'list_created':
-        case 'list_deleted':
-          store.refreshCollection('lists');
-          break;
-        case 'tag_created':
-        case 'tag_deleted':
-          store.refreshCollection('tags');
-          break;
-        case 'note_updated':
-        case 'note_deleted':
-          store.refreshCollection('notes');
-          break;
-        case 'event_updated':
-        case 'event_deleted':
-          store.refreshCollection('events');
-          break;
-        case 'notification_created': {
-          const notification = (data as { object?: ApiNotification }).object;
-          if (notification) store.applyExternalNotification(notification);
-          break;
-        }
-      }
-    },
-  });
-
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase();
@@ -461,7 +419,7 @@ function Workspace({ store }: { store: ReturnType<typeof useAppStore> }) {
 
   return (
     <main className="workspace">
-      <Sidebar page={page} onPage={setPage} store={store} searchQuery={searchQuery} onSearch={setSearchQuery} onClearSearch={clearSearch} searchInputRef={searchInputRef} wsConnected={wsConnected} onWsReconnect={wsReconnect} />
+      <Sidebar page={page} onPage={setPage} store={store} searchQuery={searchQuery} onSearch={setSearchQuery} onClearSearch={clearSearch} searchInputRef={searchInputRef} />
       <section className="workspace-main">
         {renderPage()}
       </section>

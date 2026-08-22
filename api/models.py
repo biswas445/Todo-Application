@@ -214,27 +214,3 @@ class Notification(models.Model):
     def __str__(self):
         return self.message[:50]
 
-
-class WsTicketNonce(models.Model):
-    """Consumed WebSocket ticket nonce.
-
-    Each ticket carries a random nonce; the first connection to present it
-    inserts a row here, and the unique constraint rejects every replay for
-    the rest of the ticket's lifetime. Rows are purged once they are older
-    than the ticket lifetime (see api.middleware.get_user_from_ticket).
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    nonce = models.CharField(max_length=64)
-    used_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'ws_ticket_nonces'
-        constraints = [
-            models.UniqueConstraint(
-                fields=['nonce'],
-                name='unique_ws_ticket_nonce'
-            )
-        ]
-
-    def __str__(self):
-        return self.nonce

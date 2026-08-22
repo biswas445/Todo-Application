@@ -9,13 +9,10 @@ The dedup key matches the client-side scheme (``task-completed:<task id>``),
 and the unique ``(user, dedup_key)`` constraint combined with ``get_or_create``
 ensures the server and client can never double-create the same notification.
 """
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
 
 from .models import Task, Notification
-from .serializers import NotificationSerializer
 
 
 @receiver(pre_save, sender=Task)
@@ -39,7 +36,7 @@ def capture_previous_completed(sender, instance, **kwargs):
 def create_task_completed_notification(sender, instance, created, **kwargs):
     """Create a completion notification when a task flips to completed."""
     # ``raw=True`` during loaddata/fixtures: rows are being deserialized, not
-    # user-driven, so they must not generate notifications or WS broadcasts.
+    # user-driven, so they must not generate notifications.
     if kwargs.get('raw'):
         return
     if created:
@@ -53,24 +50,8 @@ def create_task_completed_notification(sender, instance, created, **kwargs):
 
     name = instance.user.get_full_name() or instance.user.username
     message = f'Hi, {name} You Finished This Task: {instance.title}.'
-    notification, created = Notification.objects.get_or_create(
+    Notification.objects.get_or_create(
         user=instance.user,
         dedup_key=f'task-completed:{instance.id}',
         defaults={'message': message},
-    )
-    if not created:
-        return
-    # Broadcast so the user's other connected devices see the completion
-    # notification in real time instead of only on their next reload.
-    channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
-        f"user_{instance.user.id}_notifications",
-        {
-            'type': 'send_notification',
-            'data': {
-                'message': notification.message,
-                'type': 'notification_created',
-                'object': NotificationSerializer(notification).data,
-            },
-        },
     )

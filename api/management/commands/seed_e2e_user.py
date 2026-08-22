@@ -1,11 +1,9 @@
 """
-Seed (or reset) an active user for Playwright end-to-end tests.
+Seed (or reset) a user with known credentials for Playwright end-to-end tests.
 
-Normal sign-up requires email verification, which is impractical to automate in
-an E2E run (the dev email backend only prints the link to the server log).
-This command creates an already-active user with known credentials so the
-browser tests can sign in through the real UI. The user is deleted and
-recreated on every run so each E2E session starts from a clean slate.
+This command creates a user the browser tests can sign in with through the
+real UI. The user is deleted and recreated on every run so each E2E session
+starts from a clean slate.
 
 Credentials default to the same values the Playwright spec uses; override both
 together via the E2E_EMAIL / E2E_PASSWORD environment variables.
@@ -68,10 +66,7 @@ class Command(BaseCommand):
             first_name='E2E',
             last_name='Tester',
         )
-        # Bypass email verification: mark the account active directly.
-        user.is_active = True
-        user.save(update_fields=['is_active'])
 
         self.stdout.write(self.style.SUCCESS(
-            f'Seeded active e2e user {user.email}.'
+            f'Seeded e2e user {user.email}.'
         ))

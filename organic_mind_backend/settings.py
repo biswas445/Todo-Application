@@ -54,9 +54,7 @@ else:
     )
 
 # CORS settings for React frontend. Narrow this to the deployed frontend
-# origin(s) in production via DJANGO_CORS_ORIGINS. The WebSocket origin check
-# (see asgi.py) reuses this list, so it must cover every origin the SPA is
-# served from.
+# origin(s) in production via DJANGO_CORS_ORIGINS.
 CORS_ALLOW_ALL_ORIGINS = False
 _cors_origins_env = os.environ.get('DJANGO_CORS_ORIGINS')
 if _cors_origins_env:
@@ -93,8 +91,6 @@ CORS_ALLOW_HEADERS = [
 # Application definition
 
 INSTALLED_APPS = [
-    # Daphne must come first so its ASGI runserver serves WebSockets
-    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -104,7 +100,6 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'rest_framework.authtoken',
-    'channels',
     'api',
 ]
 
@@ -215,6 +210,9 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
     },
     {
+        'NAME': 'api.password_validators.ComplexityPasswordValidator',
+    },
+    {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
     },
     {
@@ -245,35 +243,10 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 
-# Email
-# https://docs.djangoproject.com/en/6.1/topics/email/
-# The backend must be chosen explicitly in production: the console backend
-# prints verification emails (including the signed activation link) to the
-# server log, so it is only acceptable as a dev convenience.
-EMAIL_BACKEND = os.environ.get('DJANGO_EMAIL_BACKEND')
-if not EMAIL_BACKEND:
-    if DEBUG:
-        # Dev-only fallback: verification emails are printed to the server
-        # log. Point DJANGO_EMAIL_BACKEND at an SMTP backend in production.
-        EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-    else:
-        raise ImproperlyConfigured(
-            'DJANGO_EMAIL_BACKEND must be set when DJANGO_DEBUG is False; '
-            'the console backend would leak signed verification links to logs.'
-        )
-DEFAULT_FROM_EMAIL = os.environ.get(
-    'DJANGO_DEFAULT_FROM_EMAIL',
-    'Organic Mind <noreply@organicmind.local>',
-)
-
 # Auth hardening knobs
 # API tokens older than this many days are rejected (sign in again to get a
-# fresh one). WebSocket tickets are single-purpose and expire within seconds.
+# fresh one).
 TOKEN_EXPIRY_DAYS = int(os.environ.get('DJANGO_TOKEN_EXPIRY_DAYS', '30'))
-WS_TICKET_MAX_AGE = int(os.environ.get('DJANGO_WS_TICKET_MAX_AGE', '60'))
-EMAIL_VERIFICATION_MAX_AGE_SECONDS = int(
-    os.environ.get('DJANGO_EMAIL_VERIFICATION_MAX_AGE', str(3 * 24 * 3600))
-)
 
 
 # Logging
@@ -334,27 +307,3 @@ REST_FRAMEWORK = {
 
 # Custom user model
 AUTH_USER_MODEL = 'api.User'
-
-# Channels configuration for WebSockets
-ASGI_APPLICATION = 'organic_mind_backend.asgi.application'
-
-# Channel layers configuration. The in-memory backend only works within a
-# single process, so it is a development convenience. For production or
-# multi-instance deployments set REDIS_URL (e.g. redis://localhost:6379/0) so
-# every process shares a Redis-backed channel layer.
-REDIS_URL = os.environ.get('REDIS_URL')
-if REDIS_URL:
-    CHANNEL_LAYERS = {
-        'default': {
-            'BACKEND': 'channels_redis.core.RedisChannelLayer',
-            'CONFIG': {
-                'hosts': [REDIS_URL],
-            },
-        },
-    }
-else:
-    CHANNEL_LAYERS = {
-        'default': {
-            'BACKEND': 'channels.layers.InMemoryChannelLayer',
-        },
-    }

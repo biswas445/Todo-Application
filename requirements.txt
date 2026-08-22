@@ -3,11 +3,6 @@ django==6.1
 djangorestframework==3.18.0
 django-cors-headers==4.9.0
 
-# Real-time Features (WebSockets)
-channels==4.3.2
-daphne==4.2.3
-channels_redis==4.3.0
-
 # Database driver for DJANGO_DATABASE_URL postgres:// deployments
 # (not needed for the SQLite dev default)
 psycopg[binary]==3.3.4

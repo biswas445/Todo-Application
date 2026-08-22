@@ -13,34 +13,4 @@ from django.core.asgi import get_asgi_application
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'organic_mind_backend.settings')
 
-# Initialize Django ASGI application early to ensure the AppRegistry
-# is populated before importing code that may import ORM models.
-django_asgi_app = get_asgi_application()
-
-from channels.auth import AuthMiddlewareStack
-from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.security.websocket import OriginValidator
-from django.conf import settings
-from django.urls import path
-
-from api.middleware import TokenAuthMiddleware
-from api.websocket import websocket_urlpatterns
-
-application = ProtocolTypeRouter({
-    "http": django_asgi_app,
-    # Validate the Origin header against the CORS allow-list (the frontend's
-    # origins) rather than ALLOWED_HOSTS (the API's own hostnames). The two
-    # differ in any real deployment, where the SPA and the API are served
-    # from separate origins, so AllowedHostsOriginValidator would reject
-    # every legitimate WebSocket connection there.
-    "websocket": OriginValidator(
-        # Session auth runs first; TokenAuthMiddleware then overrides
-        # scope['user'] when a ?ticket= query parameter is present.
-        AuthMiddlewareStack(
-            TokenAuthMiddleware(
-                URLRouter(websocket_urlpatterns)
-            )
-        ),
-        settings.CORS_ALLOWED_ORIGINS,
-    ),
-})
+application = get_asgi_application()

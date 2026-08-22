@@ -27,7 +27,10 @@ describe('End-to-End Tests', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 201,
-        json: async () => ({ token: 'new-token', user: { id: 1, username: 'testuser' } }),
+        json: async () => ({
+          message: 'Account created. You can now sign in.',
+          user: { id: 1, username: 'testuser' },
+        }),
       });
 
       const { authApi } = await import('@/api/index');
@@ -37,14 +40,14 @@ describe('End-to-End Tests', () => {
         password: 'password123',
       });
 
-      expect(result.token).toBe('new-token');
+      expect(result.message).toBe('Account created. You can now sign in.');
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('/auth/register/'),
         expect.objectContaining({ method: 'POST' })
       );
-      
-      // Token should NOT be stored automatically (signup doesn't auto-login)
-      expect(mockLocalStorage.setItem).not.toHaveBeenCalledWith('auth_token', 'new-token');
+
+      // Registration returns no token, so nothing is stored at signup.
+      expect(mockLocalStorage.setItem).not.toHaveBeenCalledWith('auth_token', expect.anything());
     });
 
     it('should complete signin flow and store token', async () => {

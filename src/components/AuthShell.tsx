@@ -63,7 +63,6 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
       return; 
     }
     // Registration successful - show success message and redirect to signin.
-    // The account must verify its email before sign-in will succeed.
     setSignupSuccess(true);
     setSignupName(''); 
     setSignupEmail(''); 
@@ -98,7 +97,7 @@ function AuthShell({ view, onView, store }: { view: AuthView; onView: (view: Aut
             <h1>{isSignup ? 'Create account' : 'Sign in'}</h1>
             {isSignup && <p className="form-intro">A calmer place to collect your tasks, plans, and ideas.</p>}
             {!isSignup && signupSuccess && (
-              <p className="auth-success"><CheckCircle size={16} /> Account created. Check your email to verify your address, then sign in.</p>
+              <p className="auth-success"><CheckCircle size={16} /> Account created. Sign in with your new credentials.</p>
             )}
             {isSignup && (
               <label>Name<input type="text" placeholder="Your name" value={signupName} onChange={(e) => setSignupName(e.target.value)} required /></label>

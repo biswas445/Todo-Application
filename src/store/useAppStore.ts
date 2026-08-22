@@ -252,6 +252,16 @@ export function useAppStore() {
     if (password.length < 8) {
       return { ok: false, error: 'Password must be at least 8 characters.' };
     }
+    // Mirror the backend ComplexityPasswordValidator so users get immediate
+    // feedback before the request is sent.
+    const missing: string[] = [];
+    if (!/[A-Z]/.test(password)) missing.push('an uppercase letter');
+    if (!/[a-z]/.test(password)) missing.push('a lowercase letter');
+    if (!/\d/.test(password)) missing.push('a number');
+    if (!/[^A-Za-z0-9]/.test(password)) missing.push('a special character');
+    if (missing.length > 0) {
+      return { ok: false, error: `Password must contain ${missing.join(', ')}.` };
+    }
 
     try {
       setAuthPending(true);
@@ -458,9 +468,9 @@ export function useAppStore() {
     try {
       const apiNotification = await notificationsApi.create({ message, dedup_key: dedupKey });
       const notification = mapApiNotificationToFrontend(apiNotification);
-      // Upsert rather than append: the backend also broadcasts this same
-      // notification over the WebSocket, and that broadcast can arrive before
-      // this POST response resolves. Appending blindly would insert it twice
+      // Upsert rather than append: the server may already hold a notification
+      // with the same dedup key (e.g. the completion signal), and the POST
+      // returns that stored row. Appending blindly could insert it twice
       // (duplicate entry + double-counted unread badge).
       setData((d) => {
         const isSame = (n: Notification) =>
@@ -909,102 +919,6 @@ export function useAppStore() {
     seenNotificationKeys.current = new Set();
   }, []);
 
-  // ==================== Real-time (WebSocket) helpers ====================
-  // Apply changes broadcast by the backend. Upserts are idempotent, so it is
-  // harmless when the broadcast echoes an action this client just performed.
-
-  const applyExternalTask = useCallback((apiTask: ApiTask) => {
-    const task = mapApiTaskToFrontend(apiTask);
-    setData((d) => {
-      const exists = d.tasks.some((t) => t.id === task.id);
-      return {
-        ...d,
-        tasks: exists ? d.tasks.map((t) => (t.id === task.id ? task : t)) : [task, ...d.tasks],
-      };
-    });
-  }, []);
-
-  const removeExternalTask = useCallback((id: EntityId) => {
-    setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== id) }));
-  }, []);
-
-  const applyExternalNote = useCallback((apiNote: ApiNote) => {
-    const note = mapApiNoteToFrontend(apiNote);
-    setData((d) => {
-      const exists = d.notes.some((n) => n.id === note.id);
-      return {
-        ...d,
-        notes: exists ? d.notes.map((n) => (n.id === note.id ? note : n)) : [note, ...d.notes],
-      };
-    });
-  }, []);
-
-  const applyExternalEvent = useCallback((apiEvent: ApiEvent) => {
-    const event = mapApiEventToFrontend(apiEvent);
-    setData((d) => {
-      const exists = d.events.some((e) => e.id === event.id);
-      return {
-        ...d,
-        events: exists ? d.events.map((e) => (e.id === event.id ? event : e)) : [...d.events, event],
-      };
-    });
-  }, []);
-
-  const applyExternalNotification = useCallback((apiNotification: ApiNotification) => {
-    const notification = mapApiNotificationToFrontend(apiNotification);
-    // Consume the dedup key so this device's own reminder scheduler does not
-    // recreate a notification another device (or the server) already created.
-    if (notification.dedupKey) {
-      seenNotificationKeys.current.add(notification.dedupKey);
-      const userId = dataRef.current.user?.id;
-      if (userId) {
-        persistConsumedKeys(userId, seenNotificationKeys.current);
-      }
-    }
-    setData((d) => {
-      const exists = d.notifications.some((n) => n.id === notification.id);
-      return {
-        ...d,
-        notifications: exists
-          ? d.notifications.map((n) => (n.id === notification.id ? notification : n))
-          : [...d.notifications, notification],
-      };
-    });
-  }, []);
-
-  const refreshCollection = useCallback(async (collection: 'lists' | 'tags' | 'notes' | 'events') => {
-    try {
-      switch (collection) {
-        case 'lists': {
-          const response = await listsApi.getAll();
-          const lists = normalizeCollection<ApiList>(response).map(mapApiListToFrontend);
-          setData((d) => ({ ...d, lists }));
-          break;
-        }
-        case 'tags': {
-          const response = await tagsApi.getAll();
-          const tags = normalizeCollection<ApiTag>(response).map(mapApiTagToFrontend);
-          setData((d) => ({ ...d, tags }));
-          break;
-        }
-        case 'notes': {
-          const response = await notesApi.getAll();
-          const notes = normalizeCollection<ApiNote>(response).map(mapApiNoteToFrontend);
-          setData((d) => ({ ...d, notes }));
-          break;
-        }
-        case 'events': {
-          const response = await eventsApi.getAll();
-          const events = normalizeCollection<ApiEvent>(response).map(mapApiEventToFrontend);
-          setData((d) => ({ ...d, events }));
-          break;
-        }
-      }
-    } catch (err) {
-      console.error(`Failed to refresh ${collection}:`, err);
-    }
-  }, []);
-
   return {
     data,
     loading,
@@ -1041,12 +955,6 @@ export function useAppStore() {
     markAllNotificationsRead,
     updateSettings,
     resetData,
-    applyExternalTask,
-    removeExternalTask,
-    applyExternalNote,
-    applyExternalEvent,
-    applyExternalNotification,
-    refreshCollection,
   };
 }
 

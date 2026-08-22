@@ -411,24 +411,16 @@ describe('mark all notifications read', () => {
   it('persists via a single bulk request instead of one PATCH per notification', async () => {
     const { creates, requests } = mockApi({
       user: makeUser(),
-      tasks: [makeApiTask('t-tomorrow', 'Due Tomorrow', tomorrowStr())],
+      tasks: [
+        makeApiTask('t-tomorrow', 'Due Tomorrow', tomorrowStr()),
+        makeApiTask('t-tomorrow-2', 'Also Due Tomorrow', tomorrowStr()),
+      ],
     });
 
     const { result } = renderHook(() => useAppStore());
     await waitFor(() => expect(result.current.data.session).toBe(true));
-    await waitFor(() => expect(result.current.data.notifications).toHaveLength(1));
-
-    // Second unread notification so the bulk path is unambiguous.
-    await act(async () => {
-      result.current.applyExternalNotification({
-        id: 'n-ext',
-        message: 'External notification',
-        dedup_key: 'external:1',
-        read: false,
-        created_at: new Date().toISOString(),
-      });
-    });
-    expect(result.current.data.notifications).toHaveLength(2);
+    // Both day-before reminders fire, so the bulk path is unambiguous.
+    await waitFor(() => expect(result.current.data.notifications).toHaveLength(2));
 
     await act(async () => {
       await result.current.markAllNotificationsRead();
@@ -439,7 +431,7 @@ describe('mark all notifications read', () => {
     const patchCalls = requests.filter((r) => r.method === 'PATCH' && r.path.startsWith('/notifications/'));
     expect(bulkCalls).toHaveLength(1);
     expect(patchCalls).toHaveLength(0);
-    expect(creates).toHaveLength(1);
+    expect(creates).toHaveLength(2);
   });
 
   it('does nothing when there are no unread notifications', async () => {
@@ -454,65 +446,5 @@ describe('mark all notifications read', () => {
     });
 
     expect(requests.filter((r) => r.path === '/notifications/mark_all_read/')).toHaveLength(0);
-  });
-});
-
-describe('cross-device notification sync', () => {
-  it('upserts notifications broadcast by the backend without duplicating', async () => {
-    mockApi({ user: makeUser(), tasks: [] });
-
-    const { result } = renderHook(() => useAppStore());
-    await waitFor(() => expect(result.current.data.session).toBe(true));
-
-    const apiNotification = {
-      id: 'n-ext',
-      message: 'Hi, Test User You Finished This Task: Finish report.',
-      dedup_key: 'task-completed:t-done',
-      read: false,
-      created_at: new Date().toISOString(),
-    };
-
-    await act(async () => {
-      result.current.applyExternalNotification(apiNotification);
-    });
-    expect(result.current.data.notifications).toHaveLength(1);
-
-    // The same broadcast replayed (e.g. reconnect echo) must not duplicate.
-    await act(async () => {
-      result.current.applyExternalNotification({ ...apiNotification, read: true });
-    });
-    expect(result.current.data.notifications).toHaveLength(1);
-    expect(result.current.data.notifications[0].read).toBe(true);
-  });
-
-  it('consumes the dedup key so this device does not recreate a remote notification', async () => {
-    const { creates } = mockApi({
-      user: makeUser(),
-      tasks: [makeApiTask('t-done', 'Finish report', null)],
-    });
-
-    const { result } = renderHook(() => useAppStore());
-    await waitFor(() => expect(result.current.data.session).toBe(true));
-    await flush();
-    expect(creates).toHaveLength(0);
-
-    // Another device completed the task and this one received the broadcast.
-    await act(async () => {
-      result.current.applyExternalNotification({
-        id: 'n-ext',
-        message: 'Hi, Test User You Finished This Task: Finish report.',
-        dedup_key: 'task-completed:t-done',
-        read: false,
-        created_at: new Date().toISOString(),
-      });
-    });
-
-    // Toggling the same task locally must not POST a duplicate notification.
-    await act(async () => {
-      await result.current.toggleTask('t-done');
-    });
-    await flush();
-    expect(creates).toHaveLength(0);
-    expect(result.current.data.notifications).toHaveLength(1);
   });
 });

@@ -103,8 +103,7 @@ export function setOnUnauthorizedHandler(handler: UnauthorizedHandler | null): v
   unauthorizedHandler = handler;
 }
 
-// Invoked by apiRequest (and the WebSocket ticket exchange) when the server
-// rejects the current credentials.
+// Invoked by apiRequest when the server rejects the current credentials.
 export function notifyUnauthorized(): void {
   unauthorizedHandler?.();
 }
@@ -112,6 +111,28 @@ export function notifyUnauthorized(): void {
 // Only idempotent methods are safe to retry: a POST/PATCH/DELETE that timed
 // out after the server already applied it would be duplicated on retry.
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// DRF reports validation failures as per-field message arrays (e.g.
+// { email: ['A user with this email already exists.'] }) rather than a single
+// top-level message. Flatten any string messages so the UI can show the real
+// reason instead of a generic fallback.
+function extractErrorMessage(data: unknown, fallback: string): string {
+  if (!data || typeof data !== 'object') return fallback;
+  const record = data as Record<string, unknown>;
+  if (typeof record.error === 'string') return record.error;
+  if (typeof record.detail === 'string') return record.detail;
+  const parts: string[] = [];
+  for (const value of Object.values(record)) {
+    if (typeof value === 'string') {
+      parts.push(value);
+    } else if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === 'string') parts.push(item);
+      }
+    }
+  }
+  return parts.length > 0 ? parts.join(' ') : fallback;
+}
 
 // Helper to make authenticated API calls with retry logic
 async function apiRequest<T>(
@@ -154,7 +175,7 @@ async function apiRequest<T>(
             notifyUnauthorized();
           }
           throw new ApiError(
-            errorData.error || errorData.detail || 'Request failed',
+            extractErrorMessage(errorData, 'Request failed'),
             response.status
           );
         }
@@ -162,13 +183,13 @@ async function apiRequest<T>(
         // For server errors (5xx), retry idempotent requests with exponential backoff
         if (attempt === effectiveRetries) {
           throw new ApiError(
-            errorData.error || errorData.detail || 'Server error after retries',
+            extractErrorMessage(errorData, 'Server error after retries'),
             response.status
           );
         }
 
         lastError = new ApiError(
-          errorData.error || errorData.detail || 'Server error, retrying...',
+          extractErrorMessage(errorData, 'Server error, retrying...'),
           response.status
         );
 
@@ -287,9 +308,14 @@ export interface AuthResponse {
   user: ApiUser;
 }
 
+export interface RegisterResponse {
+  message: string;
+  user: ApiUser;
+}
+
 export const authApi = {
-  async register(payload: RegisterPayload): Promise<AuthResponse> {
-    const response = await apiRequest<AuthResponse>('/auth/register/', {
+  async register(payload: RegisterPayload): Promise<RegisterResponse> {
+    const response = await apiRequest<RegisterResponse>('/auth/register/', {
       method: 'POST',
       body: JSON.stringify(payload),
     });

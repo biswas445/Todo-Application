@@ -2,10 +2,7 @@
 Django REST Framework viewsets for Organic Mind.
 Implements user ownership isolation at the backend level.
 """
-from django.conf import settings
-from django.core import signing
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.core.mail import send_mail
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -17,12 +14,9 @@ from django.db.models import Count, Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
 from datetime import date as date_cls
 import logging
 import zoneinfo
-from .middleware import generate_ws_ticket
 from .models import List, Tag, Task, Subtask, Note, CalendarEvent, Notification
 from .serializers import (
     UserSerializer, UserRegistrationSerializer, ChangePasswordSerializer,
@@ -31,16 +25,7 @@ from .serializers import (
 )
 
 User = get_user_model()
-channel_layer = get_channel_layer()
 logger = logging.getLogger(__name__)
-
-# Salted signing ties verification tokens to SECRET_KEY without extra storage.
-EMAIL_VERIFICATION_SALT = 'organic-mind-email-verification'
-
-
-def generate_email_verification_token(user):
-    """Signed, timestamped token proving control of the account's email."""
-    return signing.dumps({'user_id': str(user.pk)}, salt=EMAIL_VERIFICATION_SALT)
 
 
 def get_owned_subtask(subtask_pk, user):
@@ -84,41 +69,6 @@ def user_local_today(user):
     return timezone.now().astimezone(tz).date()
 
 
-def send_verification_email(request, user):
-    """Email the signed verification link. Returns True if it was sent.
-
-    Wrapped so a failing email backend does not turn registration into a 500
-    (the account row already exists by the time this runs). On failure the
-    caller can point the user at the resend endpoint.
-    """
-    token = generate_email_verification_token(user)
-    verify_url = (
-        request.build_absolute_uri('/api/auth/verify_email/')
-        + f'?token={token}'
-    )
-    name = user.get_full_name() or user.username
-    try:
-        send_mail(
-            subject='Verify your Organic Mind account',
-            message=(
-                f'Hi {name},\n\n'
-                'Welcome to Organic Mind! Please confirm your email '
-                'address by opening the link below:\n\n'
-                f'{verify_url}\n\n'
-                f'This link expires in '
-                f'{settings.EMAIL_VERIFICATION_MAX_AGE_SECONDS // 3600} '
-                'hours. If you did not create an account, you can safely '
-                'ignore this email.'
-            ),
-            from_email=None,  # uses DEFAULT_FROM_EMAIL
-            recipient_list=[user.email],
-        )
-        return True
-    except Exception:
-        logger.exception('Failed to send verification email to %s', user.email)
-        return False
-
-
 @require_GET
 def health_check(request):
     """Liveness/readiness probe for load balancers and monitoring.
@@ -155,91 +105,20 @@ class AuthViewSet(viewsets.ViewSet):
     # stale/expired/rotated token carried in the Authorization header cannot
     # make DRF reject the request with 401 before the view runs. Without this,
     # a client whose token has expired could never reach /login/ to get a new
-    # one (lockout). ws_ticket and logout intentionally keep authentication.
+    # one (lockout). logout intentionally keeps authentication.
 
     @action(detail=False, methods=['post'], authentication_classes=[])
     def register(self, request):
         serializer = UserRegistrationSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            # The account stays inactive until the email is confirmed; no
-            # token is issued here. The link is signed with SECRET_KEY and
-            # expires after EMAIL_VERIFICATION_MAX_AGE_SECONDS.
-            sent = send_verification_email(request, user)
-            message = (
-                'Account created. Check your email and open the '
-                'verification link before signing in.'
-                if sent else
-                'Account created, but the verification email could not be '
-                'sent just now. Use "resend verification email" to try again.'
-            )
+            # No token is issued here: the client signs in separately via
+            # /login/ so the credential flow stays explicit.
             return Response({
-                'message': message,
+                'message': 'Account created. You can now sign in.',
                 'user': UserSerializer(user).data,
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    @action(detail=False, methods=['post'], url_path='resend_verification',
-            authentication_classes=[])
-    def resend_verification(self, request):
-        """Re-send the verification link for an unverified account.
-
-        Covers the case where the original signup email failed to send or was
-        lost. The response is identical whether or not the account exists so
-        the endpoint cannot be used to enumerate unverified emails.
-        """
-        email = request.data.get('email', '')
-        user = User.objects.filter(email__iexact=email, is_active=False).first()
-        if user is not None:
-            send_verification_email(request, user)
-        return Response({
-            'message': (
-                'If an unverified account exists for that email, a new '
-                'verification link has been sent.'
-            )
-        })
-
-    @action(detail=False, methods=['get'], url_path='verify_email',
-            authentication_classes=[])
-    def verify_email(self, request):
-        """Activate an account using the signed token emailed at registration."""
-        token = request.query_params.get('token', '')
-        try:
-            payload = signing.loads(
-                token,
-                salt=EMAIL_VERIFICATION_SALT,
-                max_age=settings.EMAIL_VERIFICATION_MAX_AGE_SECONDS,
-            )
-        except signing.BadSignature:
-            return Response(
-                {'error': 'This verification link is invalid or has expired.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        user = User.objects.filter(pk=payload.get('user_id')).first()
-        if user is None:
-            return Response(
-                {'error': 'This verification link is invalid.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        if not user.is_active:
-            user.is_active = True
-            user.save(update_fields=['is_active'])
-        return Response({'message': 'Email verified. You can now sign in.'})
-
-    @action(
-        detail=False,
-        methods=['post'],
-        url_path='ws_ticket',
-        permission_classes=[permissions.IsAuthenticated],
-    )
-    def ws_ticket(self, request):
-        """Issue a short-lived ticket for WebSocket authentication.
-
-        The long-lived API token never appears in the WebSocket URL (query
-        strings leak into server and proxy logs); the ticket is only valid
-        for WS_TICKET_MAX_AGE seconds.
-        """
-        return Response({'ticket': generate_ws_ticket(request.user)})
 
     @action(detail=False, methods=['post'], authentication_classes=[])
     def login(self, request):
@@ -264,9 +143,8 @@ class AuthViewSet(viewsets.ViewSet):
             )
         if not user.is_active:
             # Return the same status and message as a bad-credential failure
-            # so this endpoint cannot be used to enumerate which emails hold
-            # an unverified account. The user can request a fresh link via
-            # the resend-verification endpoint.
+            # so this endpoint cannot reveal which emails hold a deactivated
+            # account (e.g. one disabled by an admin).
             return Response(
                 {'error': 'Invalid email or password.'},
                 status=status.HTTP_401_UNAUTHORIZED
@@ -403,34 +281,7 @@ class ListViewSet(viewsets.ModelViewSet):
         )
     
     def perform_create(self, serializer):
-        instance = serializer.save(user=self.request.user)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'send_notification',
-                'data': {
-                    'message': f'List "{instance.label}" created',
-                    'type': 'list_created',
-                    'object': ListSerializer(instance).data
-                }
-            }
-        )
-    
-    def perform_destroy(self, instance):
-        name = instance.label
-        super().perform_destroy(instance)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'send_notification',
-                'data': {
-                    'message': f'List "{name}" deleted',
-                    'type': 'list_deleted'
-                }
-            }
-        )
+        serializer.save(user=self.request.user)
 
 
 class TagViewSet(viewsets.ModelViewSet):
@@ -450,34 +301,7 @@ class TagViewSet(viewsets.ModelViewSet):
         )
     
     def perform_create(self, serializer):
-        instance = serializer.save(user=self.request.user)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'send_notification',
-                'data': {
-                    'message': f'Tag "{instance.label}" created',
-                    'type': 'tag_created',
-                    'object': TagSerializer(instance).data
-                }
-            }
-        )
-    
-    def perform_destroy(self, instance):
-        name = instance.label
-        super().perform_destroy(instance)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'send_notification',
-                'data': {
-                    'message': f'Tag "{name}" deleted',
-                    'type': 'tag_deleted'
-                }
-            }
-        )
+        serializer.save(user=self.request.user)
 
 
 class TaskViewSet(viewsets.ModelViewSet):
@@ -546,51 +370,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         return queryset.distinct()
     
     def perform_create(self, serializer):
-        instance = serializer.save(user=self.request.user)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'task_created',
-                'data': {
-                    'message': f'Task "{instance.title}" created',
-                    'type': 'task_created',
-                    'object': TaskSerializer(instance).data
-                }
-            }
-        )
-    
-    def perform_update(self, serializer):
-        instance = serializer.save()
-        # Send real-time notification for updates
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'task_updated',
-                'data': {
-                    'message': f'Task "{instance.title}" updated',
-                    'type': 'task_updated',
-                    'object': TaskSerializer(instance).data
-                }
-            }
-        )
-    
-    def perform_destroy(self, instance):
-        title = instance.title
-        task_id = str(instance.id)
-        super().perform_destroy(instance)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'task_deleted',
-                'data': {
-                    'message': f'Task "{title}" deleted',
-                    'type': 'task_deleted',
-                    'object': {'id': task_id}
-                }
-            }
-        )
+        serializer.save(user=self.request.user)
 
     @action(detail=True, methods=['post'])
     def toggle(self, request, pk=None):
@@ -610,18 +390,6 @@ class TaskViewSet(viewsets.ModelViewSet):
                 {'error': 'Task not found.'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{request.user.id}_notifications",
-            {
-                'type': 'task_updated',
-                'data': {
-                    'message': f'Task "{task.title}" marked as {"completed" if task.completed else "incomplete"}',
-                    'type': 'task_updated',
-                    'object': TaskSerializer(task).data
-                }
-            }
-        )
         return Response(self.get_serializer(task).data)
     
     @action(detail=True, methods=['post'])
@@ -702,105 +470,21 @@ class NoteViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         return Note.objects.filter(user=self.request.user)
-    
+
     def perform_create(self, serializer):
-        instance = serializer.save(user=self.request.user)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'note_created',
-                'data': {
-                    'message': f'Note "{instance.title}" created',
-                    'type': 'note_created',
-                    'object': NoteSerializer(instance).data
-                }
-            }
-        )
-    
-    def perform_update(self, serializer):
-        instance = serializer.save()
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'send_notification',
-                'data': {
-                    'message': f'Note "{instance.title}" updated',
-                    'type': 'note_updated',
-                    'object': NoteSerializer(instance).data
-                }
-            }
-        )
-    
-    def perform_destroy(self, instance):
-        title = instance.title
-        super().perform_destroy(instance)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'send_notification',
-                'data': {
-                    'message': f'Note "{title}" deleted',
-                    'type': 'note_deleted'
-                }
-            }
-        )
+        serializer.save(user=self.request.user)
 
 
 class CalendarEventViewSet(viewsets.ModelViewSet):
     """CRUD for calendar events."""
     serializer_class = CalendarEventSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwner]
-    
+
     def get_queryset(self):
         return CalendarEvent.objects.filter(user=self.request.user)
-    
+
     def perform_create(self, serializer):
-        instance = serializer.save(user=self.request.user)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'event_created',
-                'data': {
-                    'message': f'Event "{instance.title}" created',
-                    'type': 'event_created',
-                    'object': CalendarEventSerializer(instance).data
-                }
-            }
-        )
-    
-    def perform_update(self, serializer):
-        instance = serializer.save()
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'send_notification',
-                'data': {
-                    'message': f'Event "{instance.title}" updated',
-                    'type': 'event_updated',
-                    'object': CalendarEventSerializer(instance).data
-                }
-            }
-        )
-    
-    def perform_destroy(self, instance):
-        title = instance.title
-        super().perform_destroy(instance)
-        # Send real-time notification
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'send_notification',
-                'data': {
-                    'message': f'Event "{title}" deleted',
-                    'type': 'event_deleted'
-                }
-            }
-        )
+        serializer.save(user=self.request.user)
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
@@ -869,20 +553,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def perform_create(self, serializer):
-        instance = serializer.save(user=self.request.user)
-        # Broadcast so the user's other connected devices receive the
-        # notification in real time instead of only on their next reload.
-        async_to_sync(channel_layer.group_send)(
-            f"user_{self.request.user.id}_notifications",
-            {
-                'type': 'send_notification',
-                'data': {
-                    'message': instance.message,
-                    'type': 'notification_created',
-                    'object': NotificationSerializer(instance).data
-                }
-            }
-        )
+        serializer.save(user=self.request.user)
 
     @action(detail=False, methods=['post'], url_path='mark_all_read')
     def mark_all_read(self, request):
